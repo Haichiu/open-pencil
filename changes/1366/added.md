@@ -1,0 +1,1 @@
+- On desktop, AI setup shows whether Claude Code, Codex, and Pi are installed and which account they use, and signs Claude Code and Codex in from the setup screen.
