@@ -7,6 +7,9 @@ import { createLanguageModel, resolveLanguageModelID } from '@/app/ai/models/lan
 import { resolveProviderModel } from '@/app/ai/models/reasoning/floors'
 import { modelConnection, resolveAIModelRole } from '@/app/ai/models/store'
 import type { AIModelConnection, AIModelRole, ResolvedAIModelRole } from '@/app/ai/models/types'
+import { cloudModelConfig } from '@/app/ai/providers/openpencil/model'
+import { OPENPENCIL_AI_PROVIDER } from '@/app/ai/providers/openpencil/provider'
+import { cloudAIClient } from '@/app/cloud/integration'
 import { appCredentialServices } from '@/app/settings/credentials/app'
 import {
   initializeCredentialMigration,
@@ -68,6 +71,22 @@ export async function resolveModelConnectionAPIKey(connectionId: string): Promis
   return appCredentialServices.resolver.resolve(modelConnectionCredentialRef(connection))
 }
 
+/** Cloud's AI service is unavailable: signed out, no service, or no workspace chosen. */
+export class CloudAIUnavailableError extends Error {
+  override readonly name = 'CloudAIUnavailableError'
+
+  constructor() {
+    super('OpenPencil Cloud AI is unavailable')
+  }
+}
+
+function openPencilLanguageModel(resolved: ResolvedAIModelRole): LanguageModel {
+  const client = cloudAIClient(resolved.connection.cloudWorkspaceId ?? '')
+  if (!client) throw new CloudAIUnavailableError()
+  const { config, runtime } = cloudModelConfig(client, resolved.profile.modelID)
+  return createLanguageModel(config, runtime)
+}
+
 export async function createAIModelRuntime(role: AIModelRole): Promise<AIModelRuntime | null> {
   const resolved = resolveAIModelRole(role)
   if (!resolved) return null
@@ -88,6 +107,10 @@ export async function createAIModelRuntime(role: AIModelRole): Promise<AIModelRu
       throw new Error('ACP agents can only be assigned to the Design agent role')
     }
     return { kind: 'acp', role: resolved }
+  }
+
+  if (resolved.connection.providerID === OPENPENCIL_AI_PROVIDER) {
+    return { kind: 'direct', role: resolved, model: openPencilLanguageModel(resolved) }
   }
 
   const apiKey = await resolveModelConnectionAPIKey(resolved.connection.id)

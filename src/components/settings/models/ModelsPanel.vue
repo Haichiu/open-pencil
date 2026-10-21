@@ -6,6 +6,8 @@ import { useI18n } from '@open-pencil/vue/i18n'
 
 import { openAISetup } from '@/app/ai/models/settings/onboarding/dialog'
 import { useModelSettings } from '@/app/ai/models/settings/use'
+import { OPENPENCIL_AI_PROVIDER } from '@/app/ai/providers/openpencil/provider'
+import { cloudAIAvailable } from '@/app/cloud/integration'
 import SettingsPage from '@/components/settings/layout/SettingsPage.vue'
 import SettingsSection from '@/components/settings/layout/SettingsSection.vue'
 import ProfileEditor from '@/components/settings/models/ProfileEditor.vue'
@@ -45,6 +47,10 @@ function statusLabel(connectionId: string, providerID: string): string {
   // Pi uses its own sign-ins unless an AI Gateway key is saved.
   if (providerID === HARNESS_PROVIDER_ID && status !== 'configured') {
     return ai.value.modelAgentConnection
+  }
+  // Cloud's AI service signs in with the Home server, not a saved key.
+  if (providerID === OPENPENCIL_AI_PROVIDER) {
+    return cloudAIAvailable.value ? collaboration.value.connected : common.value.unavailable
   }
   if (status === 'configured') return collaboration.value.connected
   if (status === 'locked' || status === 'unavailable') return common.value.unavailable

@@ -42,6 +42,9 @@ const {
   providerDef,
   isACP,
   isHarness,
+  isCloud,
+  cloudWorkspaces,
+  cloudState,
   supportsThinking,
   modelOptions,
   selectedModelValue,
@@ -68,6 +71,14 @@ const feedback = useModelProfileFeedback(profile, keyInput, settings)
 const { errors: fieldErrors } = feedback
 const busy = computed(() => saving.value || connectionTestStatus.value === 'testing')
 const thinkingLevelOptions = computed(() => buildThinkingLevelOptions(ai.value))
+const cloudWorkspaceOptions = computed(() =>
+  cloudWorkspaces.value.map((workspace) => ({ value: workspace.id, label: workspace.name }))
+)
+const cloudNotice = computed(() => {
+  if (cloudState.value === 'unavailable') return ai.value.cloudAIUnavailable
+  if (cloudState.value === 'no-workspace') return ai.value.cloudAINoWorkspace
+  return null
+})
 useSettingsFormGuard({ dirty, busy, cancel: () => emit('done') })
 const CUSTOM_MODEL_VALUE = '__custom__'
 const advancedOpen = ref(Boolean(draft.customModelID.trim()))
@@ -151,6 +162,29 @@ async function remove() {
             />
           </div>
 
+          <p
+            v-if="isCloud && cloudNotice"
+            class="text-[11px] leading-relaxed text-muted"
+            data-test-id="settings-cloud-ai-notice"
+          >
+            {{ cloudNotice }}
+          </p>
+
+          <ProviderSettingsField
+            v-if="isCloud && cloudWorkspaceOptions.length"
+            :label="ai.cloudWorkspace"
+            :hint="ai.cloudWorkspaceHint"
+            :error="fieldErrors.cloudWorkspace"
+          >
+            <AppSelect
+              :model-value="draft.cloudWorkspaceId ?? ''"
+              :label="ai.cloudWorkspace"
+              :options="cloudWorkspaceOptions"
+              data-test-id="settings-cloud-ai-workspace"
+              @update:model-value="draft.cloudWorkspaceId = String($event)"
+            />
+          </ProviderSettingsField>
+
           <template v-if="!isACP">
             <div class="flex items-center gap-2 pt-1">
               <p class="text-[10px] font-medium uppercase tracking-wide text-muted">
@@ -233,6 +267,7 @@ async function remove() {
             </ProviderSettingsField>
 
             <ProviderSettingsKeyField
+              v-if="!isCloud"
               v-model="keyInput"
               :label="ai.apiKey"
               :saved="hasExistingKey"
