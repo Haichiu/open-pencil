@@ -14,6 +14,7 @@ import SYSTEM_PROMPT from '@/app/ai/chat/system-prompt'
 import { describeDiagnosticError, recordACPTransportFailure } from '@/app/diagnostics'
 import { buildACPMCPServers } from '@/app/integrations/mcp'
 
+import { parseAuthStatusUpdate } from './auth/status'
 import { mapUpdate } from './map-update'
 import { spawnACPProcess } from './process'
 
@@ -55,7 +56,15 @@ export function formatConnectionError(e: unknown, agentDef?: ACPAgentDef): strin
   if (isMissingCommandError(msg)) {
     return missingCommandMessage(agentDef)
   }
+  if (isAuthRequiredError(e)) {
+    return `${agentDef?.name ?? 'The agent'} is not signed in. Sign in from Set up AI, then try again.`
+  }
   return msg
+}
+
+/** ACP's `auth_required` error, which an agent returns for a new session before sign-in. */
+function isAuthRequiredError(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && 'code' in e && e.code === -32000
 }
 
 function startupError(error: unknown, agentDef: ACPAgentDef): Error {
@@ -211,6 +220,13 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
 
       async sessionUpdate(params: SessionNotification): Promise<void> {
         onUpdate?.(params)
+      },
+
+      extNotification: async (method, params) => {
+        const status = parseAuthStatusUpdate(method, params)
+        if (!status) return
+        const { agentAccounts } = await import('@/app/ai/agents/accounts')
+        agentAccounts.report(this.agentDef.id, status)
       }
     }
 
