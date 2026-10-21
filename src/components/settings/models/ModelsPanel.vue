@@ -41,6 +41,13 @@ function editModel(profileId: string): void {
   editing.value = true
 }
 
+/** Whether a row's dot shows the model as ready, by the same rule as its label. */
+function connectionState(connectionId: string, providerID: string): 'configured' | 'missing' {
+  if (providerID === OPENPENCIL_AI_PROVIDER)
+    return cloudAIAvailable.value ? 'configured' : 'missing'
+  return statusByConnection.value[connectionId] === 'configured' ? 'configured' : 'missing'
+}
+
 function statusLabel(connectionId: string, providerID: string): string {
   const status = statusByConnection.value[connectionId]
   if (providerID.startsWith('acp:')) return ai.value.modelAgentConnection
@@ -126,19 +133,11 @@ const { profiles, statusByConnection, refreshStatuses } = useModelSettings()
               <template #trailing>
                 <span
                   class="mr-1 flex items-center gap-1 text-[11px] text-muted"
-                  :data-state="
-                    statusByConnection[profile.connectionId] === 'configured'
-                      ? 'configured'
-                      : 'missing'
-                  "
+                  :data-state="connectionState(profile.connectionId, profile.providerID)"
                 >
                   <span
                     class="size-1.5 rounded-full bg-muted data-[state=configured]:bg-success"
-                    :data-state="
-                      statusByConnection[profile.connectionId] === 'configured'
-                        ? 'configured'
-                        : 'missing'
-                    "
+                    :data-state="connectionState(profile.connectionId, profile.providerID)"
                   />
                   {{ statusLabel(profile.connectionId, profile.providerID) }}
                 </span>
