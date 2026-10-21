@@ -44,7 +44,12 @@ const configInput: AIRelayConfigInput = {
   }
 }
 
-type UpstreamCall = { url: string; authorization: string | null; body: { [key: string]: unknown } }
+type UpstreamCall = {
+  url: string
+  authorization: string | null
+  body: { [key: string]: unknown }
+  signal: AbortSignal | null | undefined
+}
 
 const closers: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -55,7 +60,10 @@ function streamOf(...events: unknown[]): string {
   return events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n'
 }
 
-async function relay(upstream: (call: UpstreamCall) => Response = () => Response.json({})) {
+async function relay(
+  upstream: (call: UpstreamCall) => Response = () => Response.json({}),
+  options: { upstreamTimeoutMs?: number } = {}
+) {
   const pglite = await PGlite.create({ dataDir: 'memory://' })
   const database = createAIRelayDatabase(new PGliteDialect(pglite))
   closers.push(() => database.destroy())
@@ -65,6 +73,7 @@ async function relay(upstream: (call: UpstreamCall) => Response = () => Response
   const keys = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: 'cloud' }] })
   const calls: UpstreamCall[] = []
   const settled: Promise<unknown>[] = []
+  const backgroundErrors: unknown[] = []
   const app = createAIRelayApp({
     config: parseAIRelayConfig(configInput, {
       DATABASE_URL: 'postgresql://unused',
@@ -73,12 +82,15 @@ async function relay(upstream: (call: UpstreamCall) => Response = () => Response
     database,
     keys,
     now: () => NOW,
+    upstreamTimeoutMs: options.upstreamTimeoutMs,
     waitUntil: (promise) => settled.push(promise),
+    onBackgroundError: (error) => backgroundErrors.push(error),
     fetch: async (input, init) => {
       const call = {
         url: input,
         authorization: new Headers(init.headers).get('Authorization'),
-        body: v.parse(v.pipe(v.string(), v.parseJson(), v.looseObject({})), init.body)
+        body: v.parse(v.pipe(v.string(), v.parseJson(), v.looseObject({})), init.body),
+        signal: init.signal
       }
       calls.push(call)
       return upstream(call)
@@ -113,7 +125,7 @@ async function relay(upstream: (call: UpstreamCall) => Response = () => Response
       method: 'POST',
       body: JSON.stringify(body)
     })
-  return { app, calls, settled, token, request, complete, workspaceId }
+  return { app, calls, settled, backgroundErrors, token, request, complete, workspaceId }
 }
 
 describe('AI relay', () => {
@@ -157,7 +169,8 @@ describe('AI relay', () => {
       {
         url: 'https://upstream.example.com/api/v1/chat/completions',
         authorization: 'Bearer upstream-key',
-        body: { model: MODEL, messages: [{ role: 'user', content: 'Hello' }] }
+        body: { model: MODEL, messages: [{ role: 'user', content: 'Hello' }] },
+        signal: expect.any(AbortSignal)
       }
     ])
     expect(await response.json()).toMatchObject({ choices: [{ message: { content: 'Hi' } }] })
@@ -201,7 +214,7 @@ describe('AI relay', () => {
       messages: []
     })
     expect(response.headers.get('Content-Type')).toBe('text/event-stream')
-    expect(context.calls[0]?.body.stream_options).toEqual({ keep: true, include_usage: true })
+    expect(context.calls[0]?.body.stream_options).toEqual({ include_usage: true })
     expect(await response.text()).toContain('"content":"Hi"')
     await Promise.all(context.settled)
     const wallet = await responseJSON(
@@ -325,8 +338,54 @@ describe('AI relay', () => {
     expect(second.next).toBeNull()
     const seen = new Set([...first.entries, ...second.entries].map((entry) => entry.id))
     expect(seen.size).toBe(51)
-    expect(
-      (await context.request(`${CLOUD_AI_API_PATHS.usage}?cursor=12.not-an-id`, bearer)).status
-    ).toBe(400)
+    for (const cursor of ['12.not-an-id', `99999999999999999.${crypto.randomUUID()}`]) {
+      expect(
+        (await context.request(`${CLOUD_AI_API_PATHS.usage}?cursor=${cursor}`, bearer)).status
+      ).toBe(400)
+    }
+  })
+
+  test('forwards only chat completion fields, so routing fields cannot reach other models', async () => {
+    const context = await relay(() => Response.json({ choices: [] }))
+    await context.complete(await context.token(), {
+      model: MODEL,
+      messages: [{ role: 'user', content: 'Hi' }],
+      tools: [],
+      temperature: 0.2,
+      models: ['other/expensive-model'],
+      provider: { order: ['other'] },
+      plugins: [{ id: 'web' }],
+      route: 'fallback',
+      user: 'someone'
+    })
+    expect(context.calls[0]?.body).toEqual({
+      model: MODEL,
+      messages: [{ role: 'user', content: 'Hi' }],
+      tools: [],
+      temperature: 0.2
+    })
+  })
+
+  test('gives up on a stalled upstream and frees its request slot', async () => {
+    const context = await relay(
+      ({ signal }) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              signal?.addEventListener('abort', () => controller.error(signal.reason))
+            }
+          })
+        ),
+      { upstreamTimeoutMs: 50 }
+    )
+    const bearer = await context.token()
+    const stalled = await context.complete(bearer, { model: MODEL })
+    expect(stalled.status).toBe(200)
+    expect(context.calls[0]?.signal).toBeInstanceOf(AbortSignal)
+    expect((await context.complete(bearer, { model: MODEL })).status).toBe(429)
+    await Promise.all(context.settled)
+    await stalled.text().catch(() => undefined)
+    expect(context.backgroundErrors).toHaveLength(1)
+    expect((await context.complete(bearer, { model: MODEL })).status).toBe(200)
   })
 })

@@ -21,7 +21,10 @@ const cursorSchema = v.pipe(
     const [milliseconds = '', id = ''] = value.split('.')
     return { createdAt: new Date(Number(milliseconds)), id }
   }),
-  v.check(({ id }) => v.is(v.pipe(v.string(), v.uuid()), id))
+  v.check(
+    ({ createdAt, id }) =>
+      !Number.isNaN(createdAt.getTime()) && v.is(v.pipe(v.string(), v.uuid()), id)
+  )
 )
 
 function encodeCursor(createdAt: Date, id: string): string {

@@ -8,20 +8,14 @@ const usageSchema = v.object({
   usage: v.object({ prompt_tokens: tokens, completion_tokens: tokens })
 })
 
-function usageOf(value: unknown): TokenUsage | null {
-  const parsed = v.safeParse(usageSchema, value)
+const usageBodySchema = v.pipe(v.string(), v.parseJson(), usageSchema)
+
+function usageOf(text: string): TokenUsage | null {
+  const parsed = v.safeParse(usageBodySchema, text)
   if (!parsed.success) return null
   return {
     inputTokens: parsed.output.usage.prompt_tokens,
     outputTokens: parsed.output.usage.completion_tokens
-  }
-}
-
-function parsedJSON(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return undefined
   }
 }
 
@@ -53,7 +47,7 @@ export async function meteredUsage(
   if (!streamed) {
     let text = ''
     for await (const chunk of chunks()) text += chunk
-    return usageOf(parsedJSON(text))
+    return usageOf(text)
   }
   let usage: TokenUsage | null = null
   let pending = ''
@@ -61,7 +55,7 @@ export async function meteredUsage(
     if (!line.startsWith('data:')) return
     const data = line.slice('data:'.length).trim()
     if (data === '[DONE]') return
-    usage = usageOf(parsedJSON(data)) ?? usage
+    usage = usageOf(data) ?? usage
   }
   for await (const chunk of chunks()) {
     pending += chunk

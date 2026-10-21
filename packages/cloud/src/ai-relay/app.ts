@@ -8,6 +8,7 @@ import {
   type AITokenClaims
 } from '#cloud/contract'
 import { validatedQuery } from '#cloud/server/validation'
+import { pick } from 'es-toolkit'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
 import { jwtVerify, type JWTVerifyGetKey } from 'jose'
@@ -33,15 +34,44 @@ export type AIRelayServices = {
    */
   waitUntil?: (promise: Promise<unknown>) => void
   onBackgroundError?: (error: unknown) => void
+  upstreamTimeoutMs?: number
 }
 
 type AIRelayEnvironment = { Variables: { claims: AITokenClaims } }
 
 const chatRequestSchema = v.looseObject({
   model: v.pipe(v.string(), v.minLength(1)),
-  stream: v.optional(v.boolean()),
-  stream_options: v.optional(v.looseObject({}))
+  stream: v.optional(v.boolean())
 })
+const chatRequestBodySchema = v.pipe(v.string(), v.parseJson(), chatRequestSchema)
+
+/**
+ * The chat completion fields sent upstream. Routing and extension fields, such as OpenRouter's
+ * `models` fallbacks, `provider`, and `plugins`, are dropped, so the relay's key runs only the
+ * catalog model it charges for.
+ */
+const FORWARDED_FIELDS = [
+  'model',
+  'messages',
+  'stream',
+  'max_tokens',
+  'max_completion_tokens',
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+  'stop',
+  'seed',
+  'tools',
+  'tool_choice',
+  'parallel_tool_calls',
+  'response_format',
+  'reasoning_effort',
+  'reasoning'
+] as const
+
+/** How long an upstream answer may take, so a stalled one cannot hold a request slot forever. */
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 10 * 60_000
 
 function aiError(context: Context, code: AIErrorCode) {
   return context.json({ error: { code } }, AI_ERROR_STATUS[code])
@@ -134,9 +164,9 @@ export function createAIRelayApp(services: AIRelayServices) {
     })
     .post(CLOUD_AI_API_PATHS.chatCompletions, async (context) => {
       const claims = context.get('claims')
-      const parsed = v.safeParse(chatRequestSchema, await context.req.json().catch(() => null))
+      const parsed = v.safeParse(chatRequestBodySchema, await context.req.text())
       if (!parsed.success) return context.json({ error: { code: 'invalid_request' as const } }, 400)
-      const request = parsed.output
+      const request = pick(parsed.output, FORWARDED_FIELDS)
       const model = models.get(request.model)
       if (!model) return aiError(context, 'model_not_allowed')
       const wallet = await usage.wallet(claims.workspaceId, claims.monthlyCreditAllowance, now())
@@ -154,10 +184,10 @@ export function createAIRelayApp(services: AIRelayServices) {
             Authorization: `Bearer ${config.upstreamKey}`
           },
           body: JSON.stringify(
-            streamed
-              ? { ...request, stream_options: { ...request.stream_options, include_usage: true } }
-              : request
-          )
+            streamed ? { ...request, stream_options: { include_usage: true } } : request
+          ),
+          // Aborting also errors a stream in progress, so metering ends and frees the slot.
+          signal: AbortSignal.timeout(services.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS)
         })
       } catch (error) {
         release()

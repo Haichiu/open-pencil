@@ -36,10 +36,16 @@ export async function startNodeAIRelay(options: NodeAIRelayOptions = {}) {
     await database.destroy()
     throw error
   }
+  // Metering outlives its answer; shutdown waits for it so no request goes uncharged.
+  const metering = new Set<Promise<unknown>>()
   const app = createAIRelayApp({
     config,
     database,
-    keys: createRemoteJWKSet(new URL(CLOUD_AI_JWKS_PATH, config.cloudURL))
+    keys: createRemoteJWKSet(new URL(CLOUD_AI_JWKS_PATH, config.cloudURL)),
+    waitUntil: (promise) => {
+      metering.add(promise)
+      void promise.finally(() => metering.delete(promise))
+    }
   })
   const server = await listen(
     async (request) => app.fetch(request),
@@ -50,6 +56,7 @@ export async function startNodeAIRelay(options: NodeAIRelayOptions = {}) {
     url: server.url,
     async stop() {
       await server.close()
+      await Promise.allSettled(metering)
       await database.destroy()
     }
   }
