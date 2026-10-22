@@ -4,9 +4,11 @@ import type {
   Agent,
   SessionNotification,
   RequestPermissionRequest,
-  RequestPermissionResponse
+  RequestPermissionResponse,
+  Usage
 } from '@agentclientprotocol/sdk'
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
+import * as v from 'valibot'
 
 import type { ACPAgentDef } from '@open-pencil/core/constants'
 
@@ -30,7 +32,37 @@ interface ACPSession {
   child: TauriChild
   onUpdate: ((params: SessionNotification) => void) | null
   dead: boolean
+  /** The model the agent says it uses, once it has said; Codex names it, Claude in its usage. */
+  model: string | null
 }
+
+/** One agent turn's tokens, as an ACP agent reports them with its answer to the prompt. */
+export interface AgentTurnUsage {
+  model: string | null
+  /** All input tokens, cached ones included, as the AI SDK counts a provider model's input. */
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number | null
+  cacheWriteTokens: number | null
+}
+
+/**
+ * The agents report fresh input apart from cache reads and writes; the chat's other models count
+ * all of it as input, with the cached part broken out.
+ */
+export function agentTurnUsage(usage: Usage, model: string | null): AgentTurnUsage {
+  const cacheReadTokens = usage.cachedReadTokens ?? null
+  const cacheWriteTokens = usage.cachedWriteTokens ?? null
+  return {
+    model,
+    inputTokens: usage.inputTokens + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0),
+    outputTokens: usage.outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens
+  }
+}
+
+const usageMetaSchema = v.object({ '_claude/model': v.string() })
 
 function isMissingCommandError(message: string): boolean {
   const normalized = message.toLowerCase()
@@ -107,11 +139,19 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
 
   /** The chat's document, where each reply's run records the edits the agent makes in it. */
   private store: EditorStore | null
+  private onUsage: ((usage: AgentTurnUsage) => void) | null
 
-  constructor(options: { agentDef: ACPAgentDef; cwd?: string; store?: EditorStore }) {
+  constructor(options: {
+    agentDef: ACPAgentDef
+    cwd?: string
+    store?: EditorStore
+    /** Told each turn's tokens, which the Usage settings count with the chat's other models. */
+    onUsage?: (usage: AgentTurnUsage) => void
+  }) {
     this.agentDef = options.agentDef
     this.cwd = options.cwd ?? '.'
     this.store = options.store ?? null
+    this.onUsage = options.onUsage ?? null
   }
 
   async sendMessages({
@@ -181,7 +221,11 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
             prompt: [{ type: 'text', text: promptText }]
           })
           // The prompt answers once the agent's turn is over; nothing else ends the reply.
-          .then((result) => finish(result.stopReason === 'end_turn' ? 'stop' : 'other'))
+          .then((result) => {
+            if (result.usage) this.onUsage?.(agentTurnUsage(result.usage, session.model))
+            finish(result.stopReason === 'end_turn' ? 'stop' : 'other')
+            return undefined
+          })
           .catch((e) => {
             recordACPTransportFailure({
               operation: 'message',
@@ -227,6 +271,8 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     const { child, input, output } = process
     const stream = ndJsonStream(input, output)
     let onUpdate: ACPSession['onUpdate'] = null
+    // Set once the session exists; the client reads it to record the model the agent names.
+    let sessionRef: ACPSession | null = null
 
     const clientImpl: Client = {
       async requestPermission(
@@ -237,6 +283,12 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
       },
 
       async sessionUpdate(params: SessionNotification): Promise<void> {
+        // Claude's adapter names its model only in its usage updates.
+        const { update } = params
+        if (update.sessionUpdate === 'usage_update') {
+          const meta = v.safeParse(usageMetaSchema, update._meta)
+          if (meta.success && sessionRef) sessionRef.model = meta.output['_claude/model']
+        }
         onUpdate?.(params)
       },
 
@@ -307,6 +359,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
       chat: tools.chat,
       child,
       dead: false,
+      model: sessionResult.models?.currentModelId ?? null,
       get onUpdate() {
         return onUpdate
       },
@@ -315,6 +368,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
       }
     }
 
+    sessionRef = session
     return session
   }
 }

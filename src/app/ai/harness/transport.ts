@@ -3,7 +3,8 @@ import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 import type {
   HarnessSessionConfiguration,
   HarnessSidecarMessage,
-  HarnessTurnEvent
+  HarnessTurnEvent,
+  HarnessTurnUsage
 } from '@open-pencil/harness'
 
 import { spawnHarnessProcess, type HarnessProcess } from './process'
@@ -83,7 +84,9 @@ export class HarnessChatTransport implements ChatTransport<UIMessage> {
     private readonly sessionId: string,
     private readonly configuration: HarnessSessionConfiguration,
     private readonly environment: Record<string, string>,
-    private readonly spawnProcess: typeof spawnHarnessProcess = spawnHarnessProcess
+    private readonly spawnProcess: typeof spawnHarnessProcess = spawnHarnessProcess,
+    /** Told each turn's tokens, which the Usage settings count with the chat's other models. */
+    private readonly onUsage?: (usage: HarnessTurnUsage) => void
   ) {}
 
   async sendMessages({
@@ -246,6 +249,9 @@ export class HarnessChatTransport implements ChatTransport<UIMessage> {
         if (message.type === 'turn.event') {
           const pending = this.pending.get(message.id)
           if (pending) emit(pending, ...mapEvent(message.event, pending))
+          if (pending && message.event.type === 'finish' && message.event.usage) {
+            this.onUsage?.(message.event.usage)
+          }
         } else {
           const pending = this.pending.get(message.id)
           if (pending) {

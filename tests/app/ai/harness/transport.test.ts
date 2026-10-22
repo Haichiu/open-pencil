@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import type { HarnessSidecarMessage } from '@open-pencil/harness'
+import type { HarnessSidecarMessage, HarnessTurnUsage } from '@open-pencil/harness'
 
 import { HarnessChatTransport } from '@/app/ai/harness/transport'
 
@@ -119,6 +119,12 @@ function fakeCompanion({ turnsFail = false } = {}) {
       output?.enqueue({ type: 'turn.event', id: turn, event: { type: 'text-delta', text } }),
     complete: (turn: string) =>
       output?.enqueue({ type: 'response', id: turn, result: { completed: true } }),
+    finish: (turn: string, usage?: HarnessTurnUsage) =>
+      output?.enqueue({
+        type: 'turn.event',
+        id: turn,
+        event: { type: 'finish', finishReason: 'stop', ...(usage ? { usage } : {}) }
+      }),
     turns
   }
 }
@@ -201,5 +207,30 @@ test('a turn the companion could not be sent ends with an error', async () => {
   }
 
   expect(types.at(-1)).toBe('error')
+  await transport.destroy()
+})
+
+test("reports each turn's tokens, which older companions do not send", async () => {
+  const companion = fakeCompanion()
+  const reported: HarnessTurnUsage[] = []
+  const transport = new HarnessChatTransport(
+    'usage-session',
+    configuration,
+    {},
+    companion.spawn,
+    (usage) => reported.push(usage)
+  )
+  const usage = { inputTokens: 1200, outputTokens: 40, cacheReadTokens: 1000, cacheWriteTokens: 0 }
+  for (const turnUsage of [usage, undefined]) {
+    const reader = (await send(transport)).getReader()
+    await Promise.resolve()
+    const turn = companion.turns.at(-1) ?? ''
+    companion.finish(turn, turnUsage)
+    companion.complete(turn)
+    while (!(await reader.read()).done) {
+      /* Drain the turn. */
+    }
+  }
+  expect(reported).toEqual([usage])
   await transport.destroy()
 })

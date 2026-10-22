@@ -22,7 +22,19 @@ const HarnessTurnEventSchema = v.variant('type', [
     toolName: v.string(),
     output: jsonValue
   }),
-  v.object({ type: v.literal('finish'), finishReason: v.string() }),
+  v.object({
+    type: v.literal('finish'),
+    finishReason: v.string(),
+    // Companions before usage reporting send none.
+    usage: v.optional(
+      v.object({
+        inputTokens: v.nullable(v.number()),
+        outputTokens: v.nullable(v.number()),
+        cacheReadTokens: v.nullable(v.number()),
+        cacheWriteTokens: v.nullable(v.number())
+      })
+    )
+  }),
   v.object({ type: v.literal('error'), message: v.string() })
 ])
 

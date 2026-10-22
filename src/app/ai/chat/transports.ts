@@ -14,6 +14,7 @@ import { ref } from 'vue'
 import { ACP_AGENTS } from '@open-pencil/core/constants'
 import type { ACPAgentID, AIProviderID, ReasoningEffort } from '@open-pencil/core/constants'
 
+import type { AgentTurnUsage } from '@/app/ai/acp/transport'
 import { AgentSetupError, assertAgentReady } from '@/app/ai/agents/readiness'
 import { classifyAIChatError, type AIChatFailure } from '@/app/ai/chat/failure'
 import { resolveLanguageModelID } from '@/app/ai/chat/model'
@@ -106,7 +107,11 @@ function callSettings(
   return { reasoning, providerOptions: mergeProviderOptions(cacheOptions, providerOptions) }
 }
 
-export async function createACPTransport(providerID: AIProviderID, store?: EditorStore) {
+export async function createACPTransport(
+  providerID: AIProviderID,
+  store?: EditorStore,
+  onUsage?: (usage: AgentTurnUsage) => void
+) {
   const agentId = providerID.replace('acp:', '') as ACPAgentID
   const agentDef = ACP_AGENTS.find((a) => a.id === agentId)
   if (!agentDef) throw new Error(`Unknown ACP agent: ${agentId}`)
@@ -114,7 +119,7 @@ export async function createACPTransport(providerID: AIProviderID, store?: Edito
   const { ACPChatTransport } = await import('@/app/ai/acp/transport')
   const { agentWorkspace } = await import('@/app/ai/agents/native')
   // A folder of its own, not the home folder, whose project settings the agent would read.
-  return new ACPChatTransport({ agentDef, cwd: await agentWorkspace(), store })
+  return new ACPChatTransport({ agentDef, cwd: await agentWorkspace(), store, onUsage })
 }
 
 export function createToolLoopTransport({
@@ -330,15 +335,19 @@ export function createChatSessionManager({
     if (errors.length) throw new AggregateError(errors, 'Agent transport teardown failed')
   }
 
-  async function createActiveACPTransport(store: EditorStore) {
+  async function createActiveACPTransport(store: EditorStore, context: AIDiagnosticContext) {
     await destroyAgentTransports()
     await assertAgentReady('acp')
-    const transport = await createACPTransport(providerID.value, store)
+    const provider = providerID.value
+    // An agent's turn counts as one step of the model it names, or of the agent itself.
+    const transport = await createACPTransport(provider, store, ({ model, ...tokens }) =>
+      recordModelStepCompleted({ provider, model: model ?? provider, ...tokens }, context)
+    )
     acpTransportInstance = transport
     return transport as ChatTransport<UIMessage>
   }
 
-  async function createActiveHarnessTransport(sessionId: string) {
+  async function createActiveHarnessTransport(sessionId: string, context: AIDiagnosticContext) {
     await destroyAgentTransports()
     const runtime = await createAIModelRuntime('design')
     if (runtime?.kind !== 'harness') throw new Error('The Design agent is not configured for Pi')
@@ -375,7 +384,9 @@ export function createChatSessionManager({
       },
       apiKey
         ? { OPENPENCIL_HARNESS_API_KEY: apiKey }
-        : { OPENPENCIL_HARNESS_AGENT_DIR: account?.agentDir ?? '' }
+        : { OPENPENCIL_HARNESS_AGENT_DIR: account?.agentDir ?? '' },
+      undefined,
+      (usage) => recordModelStepCompleted({ provider: providerID.value, model, ...usage }, context)
     )
     harnessTransportInstance = transport
     return transport as ChatTransport<UIMessage>
@@ -428,10 +439,10 @@ export function createChatSessionManager({
       let agentKind: 'acp' | 'harness' | null = null
       if (isACPProvider.value) {
         agentKind = 'acp'
-        transport = await createActiveACPTransport(store)
+        transport = await createActiveACPTransport(store, diagnosticContext)
       } else if (isHarnessProvider.value) {
         agentKind = 'harness'
-        transport = await createActiveHarnessTransport(sessionId)
+        transport = await createActiveHarnessTransport(sessionId, diagnosticContext)
       } else {
         transport = await createTransport(store, diagnosticContext)
       }
