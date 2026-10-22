@@ -22,6 +22,15 @@ import { spawnACPProcess } from './process'
 
 type TauriChild = Awaited<ReturnType<typeof spawnACPProcess>>['child']
 
+/**
+ * Lets the agent use OpenPencil's own tools without asking each time: their edits are undoable
+ * and stay in the document the chat works on. Claude's adapter passes these options to the
+ * Claude Agent SDK, where a bare server name allows every tool on it; other agents ignore it.
+ */
+const OWN_TOOLS_ALLOWED = {
+  claudeCode: { options: { allowedTools: [`mcp__${OPEN_PENCIL_MCP_SERVER}`] } }
+}
+
 /** How long an agent may take to reach OpenPencil's tools once its session starts. */
 const TOOLS_CONNECT_TIMEOUT_MS = 20_000
 
@@ -279,7 +288,8 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     try {
       sessionResult = await connection.newSession({
         cwd: this.cwd,
-        mcpServers: await buildACPMCPServers({ authorizationToken: automationAuthToken, chat })
+        mcpServers: await buildACPMCPServers({ authorizationToken: automationAuthToken, chat }),
+        _meta: OWN_TOOLS_ALLOWED
       })
     } catch (e) {
       watch?.stop()
