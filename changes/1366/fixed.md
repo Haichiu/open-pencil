@@ -1,1 +1,2 @@
 - Claude Code, Codex, and Gemini CLI chats end when the agent finishes its turn, instead of staying busy until the agent exits, and an MCP server that fails to start shows its error instead of spinning.
+- Coding agent chats start the agent in a folder of OpenPencil's own instead of your home folder, so it no longer reads project settings kept there or may write across it.
