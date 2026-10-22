@@ -171,6 +171,20 @@ export interface AgentAccountView {
   signInURL: string | null
   acceptsCode: boolean
   error: AgentAccount['error']
+  /**
+   * Whether a signed-in agent's session reached OpenPencil's tools, with the agent's reason when
+   * it did not; null when signed out or when the MCP server cannot report it.
+   */
+  tools: { state: 'checking' | 'connected' | 'unreachable'; reason: string | null } | null
+}
+
+function toolsView(account: AgentAccount, signedIn: boolean): AgentAccountView['tools'] {
+  if (!signedIn) return null
+  if (account.checking) return { state: 'checking', reason: null }
+  const tools = account.tools
+  if (tools?.connected === true) return { state: 'connected', reason: null }
+  if (tools?.connected === false) return { state: 'unreachable', reason: tools.reason }
+  return null
 }
 
 function accountState(account: AgentAccount): AgentAccountView['state'] | null {
@@ -197,7 +211,8 @@ function accountView(setup: AgentSetupState, mismatch: boolean): AgentAccountVie
     canSignIn: state === 'signed-out' && account.canSignIn,
     signInURL: account.signInURL,
     acceptsCode: account.acceptsCode,
-    error: account.error
+    error: account.error,
+    tools: toolsView(account, signedIn)
   }
 }
 

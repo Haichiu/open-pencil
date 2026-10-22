@@ -56,6 +56,7 @@ function account(overrides: Partial<AgentAccount>): AgentAccount {
     signingIn: false,
     signInURL: null,
     acceptsCode: false,
+    tools: null,
     error: null,
     ...overrides
   }
@@ -213,14 +214,41 @@ export const CodingAgentSignedIn: Story = {
       detected: detected('claude-code', 'available'),
       bridge: true,
       account: account({
-        status: { kind: 'account', label: 'Claude Max', account: { email: 'ada@example.com' } }
+        status: { kind: 'account', label: 'Claude Max', account: { email: 'ada@example.com' } },
+        tools: { connected: true }
       })
     })
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await expect(canvas.getByText(/Claude Max · ada@example\.com/)).toBeVisible()
+    await expect(canvas.getByText(/OpenPencil tools · connected/)).toBeVisible()
     await expect(canvas.queryByRole('button', { name: 'Sign in' })).toBeNull()
+  }
+}
+export const CodingAgentToolsUnreachable: Story = {
+  args: {
+    providerID: 'acp:codex',
+    recommended: false,
+    agentSetup: agentSetup({
+      detected: detected('codex', 'available'),
+      bridge: true,
+      account: account({
+        status: { kind: 'account', label: 'ChatGPT Pro', account: { email: 'ada@example.com' } },
+        adapter: { name: '@agentclientprotocol/codex-acp', version: '2.2.2' },
+        tools: {
+          connected: false,
+          reason:
+            '[codex-acp] MCP server `open-pencil` was not started, because the Codex config already defines an MCP server with this name.'
+        }
+      })
+    })
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText(/OpenPencil tools · not reachable/)).toBeVisible()
+    await expect(canvas.getByText(/Codex can’t reach OpenPencil’s tools/)).toBeVisible()
+    await expect(canvas.getByText(/already defines an MCP server/)).toBeVisible()
   }
 }
 export const CodingAgentSignedOut: Story = {

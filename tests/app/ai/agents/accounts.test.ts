@@ -31,6 +31,7 @@ function signedOut(): AgentAuthCheck {
   return {
     status: SIGNED_OUT,
     adapter: ADAPTER,
+    tools: null,
     methods: [
       { id: 'claude-ai-login', name: 'Claude Subscription', type: 'terminal' },
       { id: 'chat-gpt', name: 'ChatGPT' }
@@ -72,7 +73,9 @@ describe('agent accounts', () => {
   })
 
   test('offers no sign-in when the agent lacks the method setup uses', async () => {
-    const { accounts } = accountsWith([{ status: SIGNED_OUT, adapter: null, methods: [] }])
+    const { accounts } = accountsWith([
+      { status: SIGNED_OUT, adapter: null, methods: [], tools: null }
+    ])
     await accounts.check(codex)
     expect(accounts.account('codex').canSignIn).toBe(false)
     await accounts.signIn(codex)

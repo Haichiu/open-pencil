@@ -1,5 +1,5 @@
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
-import type { InitializeResponse } from '@agentclientprotocol/sdk'
+import type { InitializeResponse, SessionUpdate } from '@agentclientprotocol/sdk'
 import { promiseTimeout } from '@vueuse/core'
 
 import type { ACPAgentDef } from '@open-pencil/core/constants'
@@ -7,7 +7,9 @@ import type { ACPAgentDef } from '@open-pencil/core/constants'
 import { spawnACPProcess } from '@/app/ai/acp/process'
 import { createDeferred, type Deferred } from '@/app/runtime/deferred'
 
+import type { OwnToolsLink, OwnToolsOutcome } from '../own-tools'
 import {
+  isSignedIn,
   parseAuthMethods,
   parseAuthStatusUpdate,
   type AgentAuthMethod,
@@ -29,6 +31,15 @@ export interface AuthSessionOptions {
   statusTimeoutMs?: number
   /** How long an agent may take to answer `initialize` before it counts as stuck. */
   initializeTimeoutMs?: number
+  /** Also checks, for a signed-in agent, that a session reaches OpenPencil's tools. */
+  tools?: ToolsProbe
+}
+
+/** How a check starts a session the way a chat does, without sending a prompt. */
+export interface ToolsProbe {
+  /** The folder a chat's session starts in. */
+  cwd: () => Promise<string>
+  link: () => Promise<OwnToolsLink>
 }
 
 const STATUS_TIMEOUT_MS = 8_000
@@ -41,6 +52,8 @@ export interface AgentAuthCheck {
   methods: AgentAuthMethod[]
   /** The ACP program that answered, to tell a supported adapter from another with its name. */
   adapter: { name: string; version: string } | null
+  /** Whether a session reached OpenPencil's tools; null when not checked or not signed in. */
+  tools: OwnToolsOutcome | null
 }
 
 export async function spawnAgentStreams(agent: ACPAgentDef): Promise<AgentStreams> {
@@ -96,11 +109,12 @@ async function openAuthSession(
 ) {
   const streams = await spawn(agent)
   const log = createStatusLog()
+  let onUpdate: ((update: SessionUpdate) => void) | null = null
   const connection = new ClientSideConnection(
     () => ({
       // Nothing runs in this connection, so nothing may ask for permission.
       requestPermission: async () => ({ outcome: { outcome: 'cancelled' } }),
-      sessionUpdate: async () => undefined,
+      sessionUpdate: async ({ update }) => onUpdate?.(update),
       extNotification: async (method, params) => {
         const status = parseAuthStatusUpdate(method, params)
         if (status) log.push(status)
@@ -134,11 +148,43 @@ async function openAuthSession(
     await streams.close()
     throw error
   }
-  return { connection, init, log, untilStopped, close: () => streams.close() }
+  return {
+    connection,
+    init,
+    log,
+    untilStopped,
+    set onUpdate(listener: ((update: SessionUpdate) => void) | null) {
+      onUpdate = listener
+    },
+    close: () => streams.close()
+  }
 }
 
 function adapterOf(init: InitializeResponse): AgentAuthCheck['adapter'] {
   return init.agentInfo ? { name: init.agentInfo.name, version: init.agentInfo.version } : null
+}
+
+type AuthSession = Awaited<ReturnType<typeof openAuthSession>>
+
+/** Starts a session as a chat would, sends nothing, and reports whether it reached the tools. */
+async function checkTools(session: AuthSession, probe: ToolsProbe): Promise<OwnToolsOutcome> {
+  const link = await probe.link()
+  session.onUpdate = (update) => link.noteUpdate(update)
+  try {
+    await session.untilStopped(
+      session.connection.newSession({
+        cwd: await probe.cwd(),
+        mcpServers: link.mcpServers,
+        _meta: link.meta
+      })
+    )
+    return await session.untilStopped(link.outcome())
+  } catch (error) {
+    link.stop()
+    return { connected: false, reason: error instanceof Error ? error.message : String(error) }
+  } finally {
+    session.onUpdate = null
+  }
 }
 
 /** Starts the agent, reads the login it reports, and stops it. */
@@ -149,10 +195,15 @@ export async function checkAgentAuth(
   const { statusTimeoutMs = STATUS_TIMEOUT_MS } = options
   const session = await openAuthSession(agent, options)
   try {
+    const status = await session.log.next(0, statusTimeoutMs)
     return {
-      status: await session.log.next(0, statusTimeoutMs),
+      status,
       methods: parseAuthMethods(session.init.authMethods),
-      adapter: adapterOf(session.init)
+      adapter: adapterOf(session.init),
+      tools:
+        options.tools && status && isSignedIn(status)
+          ? await checkTools(session, options.tools)
+          : null
     }
   } finally {
     await session.close()

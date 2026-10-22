@@ -301,6 +301,14 @@ export const aiMessageDefaults = {
   aiSetupAgentSignInCode: 'Code from the sign-in page, if it shows one',
   aiSetupAgentSignInSubmitCode: 'Submit code',
   aiSetupAgentSignInFailed: params('Couldn’t sign in to {agent}. Try again.'),
+  aiSetupAgentTools: 'OpenPencil tools',
+  aiSetupAgentToolsConnected: 'connected',
+  aiSetupAgentToolsUnreachable: 'not reachable',
+  aiSetupAgentToolsFailed: params(
+    '{agent} can’t reach OpenPencil’s tools, so chats with it won’t start.'
+  ),
+  aiSetupAgentToolsHint:
+    'Check that OpenPencil’s MCP server is running in Settings → MCP, then press Check again.',
   aiSetupAgentAdapterMismatch: params(
     'OpenPencil found {path}, another adapter it doesn’t support. Install the supported one, then remove this one or move it later on your PATH.'
   ),

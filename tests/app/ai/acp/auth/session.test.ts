@@ -5,13 +5,20 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
   type Agent,
-  type InitializeRequest
+  type InitializeRequest,
+  type NewSessionRequest
 } from '@agentclientprotocol/sdk'
 
 import { ACP_AGENTS } from '@open-pencil/core/constants'
 
-import { checkAgentAuth, signInWithAgent, type AgentStreams } from '@/app/ai/acp/auth/session'
+import {
+  checkAgentAuth,
+  signInWithAgent,
+  type AgentStreams,
+  type ToolsProbe
+} from '@/app/ai/acp/auth/session'
 import { AUTH_STATUS_UPDATE_METHOD, type AgentAuthStatus } from '@/app/ai/acp/auth/status'
+import type { OwnToolsOutcome } from '@/app/ai/acp/own-tools'
 import { createDeferred } from '@/app/runtime/deferred'
 
 import { expectDefined } from '#tests/helpers/assert'
@@ -36,10 +43,13 @@ function fakeAgent(options: {
   afterSignIn?: AgentAuthStatus
   /** False for an agent that starts but never answers `initialize`. */
   answersInitialize?: boolean
+  /** Starts sessions, recording each request, instead of refusing them. */
+  startsSessions?: boolean
 }) {
   const toAgent = new TransformStream<Uint8Array, Uint8Array>()
   const toClient = new TransformStream<Uint8Array, Uint8Array>()
   const initialized: InitializeRequest[] = []
+  const sessions: NewSessionRequest[] = []
   const closed = createDeferred<undefined>()
   const authenticating = createDeferred<undefined>()
   let connection: AgentSideConnection | null = null
@@ -63,8 +73,10 @@ function fakeAgent(options: {
         ]
       } as Awaited<ReturnType<Agent['initialize']>>
     },
-    async newSession() {
-      throw new Error('Not used')
+    async newSession(params) {
+      if (!options.startsSessions) throw new Error('Not used')
+      sessions.push(params)
+      return { sessionId: `session-${sessions.length}` }
     },
     async authenticate() {
       authenticating.resolve(undefined)
@@ -101,6 +113,7 @@ function fakeAgent(options: {
   return {
     spawn: async () => streams,
     initialized,
+    sessions,
     closed: closed.promise,
     authenticating: authenticating.promise
   }
@@ -158,6 +171,62 @@ describe('signInWithAgent', () => {
     await agent.authenticating
     controller.abort()
     await expect(signIn).rejects.toThrow()
+    await agent.closed
+  })
+})
+
+/** A link to OpenPencil's tools that reports the given outcome once the session exists. */
+function toolsProbe(outcome: OwnToolsOutcome) {
+  const linked: string[] = []
+  const probe: ToolsProbe = {
+    cwd: async () => '/workspace',
+    link: async () => {
+      linked.push('link')
+      return {
+        mcpServers: [
+          { type: 'http', name: 'open-pencil', url: 'http://127.0.0.1:7600/mcp', headers: [] }
+        ],
+        meta: { claudeCode: { options: { allowedTools: ['mcp__open-pencil'] } } },
+        noteUpdate: () => undefined,
+        outcome: async () => outcome,
+        stop: () => undefined
+      }
+    }
+  }
+  return { probe, linked }
+}
+
+describe("checking a signed-in agent reaches OpenPencil's tools", () => {
+  test('starts a session as a chat does, sends no prompt, and reports the outcome', async () => {
+    const agent = fakeAgent({ status: SIGNED_IN, startsSessions: true })
+    const { probe } = toolsProbe({ connected: true })
+    const result = await checkAgentAuth(codex, { spawn: agent.spawn, tools: probe })
+    expect(result.tools).toEqual({ connected: true })
+    expect(agent.sessions).toHaveLength(1)
+    expect(agent.sessions[0]).toMatchObject({
+      cwd: '/workspace',
+      mcpServers: [{ name: 'open-pencil' }],
+      _meta: { claudeCode: { options: { allowedTools: ['mcp__open-pencil'] } } }
+    })
+    await agent.closed
+  })
+
+  test('leaves a signed-out agent unchecked', async () => {
+    const agent = fakeAgent({ status: SIGNED_OUT, startsSessions: true })
+    const { probe, linked } = toolsProbe({ connected: true })
+    const result = await checkAgentAuth(codex, { spawn: agent.spawn, tools: probe })
+    expect(result.tools).toBeNull()
+    expect(linked).toEqual([])
+    expect(agent.sessions).toHaveLength(0)
+    await agent.closed
+  })
+
+  test('a session the agent refuses counts as unreachable, with its reason', async () => {
+    const agent = fakeAgent({ status: SIGNED_IN })
+    const { probe } = toolsProbe({ connected: true })
+    const result = await checkAgentAuth(codex, { spawn: agent.spawn, tools: probe })
+    expect(result.tools).toMatchObject({ connected: false })
+    expect(result.tools && 'reason' in result.tools ? result.tools.reason : null).toBeString()
     await agent.closed
   })
 })

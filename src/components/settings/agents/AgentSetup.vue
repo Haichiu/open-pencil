@@ -65,6 +65,13 @@ const accountState = computed(() => {
   if (current.state === 'checking') return ai.value.aiSetupAgentAccountChecking
   return ai.value.aiSetupAgentAccountUnknown
 })
+const tools = computed(() => account.value?.tools ?? null)
+const toolsState = computed(() => {
+  const current = tools.value
+  if (current?.state === 'connected') return ai.value.aiSetupAgentToolsConnected
+  if (current?.state === 'unreachable') return ai.value.aiSetupAgentToolsUnreachable
+  return ai.value.aiSetupAgentAccountChecking
+})
 const accountAction = computed(() =>
   account.value?.canSignIn ? ai.value.aiSetupAgentSignIn : undefined
 )
@@ -129,6 +136,9 @@ function agentState(): string {
           </AppButton>
         </template>
       </AgentSetupItem>
+      <AgentSetupItem v-if="tools" :ready="tools.state === 'connected'">
+        {{ ai.aiSetupAgentTools }} · {{ toolsState }}
+      </AgentSetupItem>
     </ul>
     <AgentSignInProgress
       v-if="account?.state === 'signing-in'"
@@ -142,6 +152,12 @@ function agentState(): string {
       v-if="account?.error === 'sign-in'"
       tone="warning"
       :heading="ai.aiSetupAgentSignInFailed({ agent: agent.name })"
+    />
+    <AppAlert
+      v-if="tools?.state === 'unreachable'"
+      tone="warning"
+      :heading="ai.aiSetupAgentToolsFailed({ agent: agent.name })"
+      :description="tools.reason ?? ai.aiSetupAgentToolsHint"
     />
     <AppAlert
       v-if="view.adapterMismatch"

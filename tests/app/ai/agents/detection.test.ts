@@ -32,6 +32,7 @@ function account(overrides: Partial<AgentAccount>): AgentAccount {
     signingIn: false,
     signInURL: null,
     acceptsCode: false,
+    tools: null,
     error: null,
     ...overrides
   }

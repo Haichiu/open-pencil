@@ -66,7 +66,8 @@ describe('useAgentSetup', () => {
     const check = mock(async (_agent: ACPAgentDef) => ({
       status: { kind: 'none' as const, label: 'Not logged in' },
       adapter: { name: '@agentclientprotocol/codex-acp', version: '2.2.2' },
-      methods: [{ id: 'chat-gpt', name: 'ChatGPT' }]
+      methods: [{ id: 'chat-gpt', name: 'ChatGPT' }],
+      tools: null
     }))
     const signInWithAgent = mock(async () => null)
     const accounts = createAgentAccounts({
@@ -210,8 +211,35 @@ describe('agent account in setup', () => {
     signingIn: false,
     signInURL: null,
     acceptsCode: false,
+    tools: null,
     error: null,
     ...overrides
+  })
+
+  test("shows whether a signed-in agent reached OpenPencil's tools", () => {
+    const signedIn = { kind: 'account' as const, label: 'Claude Max' }
+    const toolsOf = (overrides: Partial<AgentAccount>) =>
+      agentSetupView(
+        claude,
+        agentState({ detected: installed, account: account({ status: signedIn, ...overrides }) })
+      ).account?.tools
+    expect(toolsOf({ tools: { connected: true } })).toEqual({ state: 'connected', reason: null })
+    expect(toolsOf({ tools: { connected: false, reason: 'failed to start' } })).toEqual({
+      state: 'unreachable',
+      reason: 'failed to start'
+    })
+    expect(toolsOf({ checking: true })).toEqual({ state: 'checking', reason: null })
+    // An older MCP server cannot tell, and a signed-out agent has no sessions to check.
+    expect(toolsOf({ tools: { connected: null } })).toBeNull()
+    expect(
+      agentSetupView(
+        claude,
+        agentState({
+          detected: installed,
+          account: account({ status: { kind: 'none', label: 'Not logged in' } })
+        })
+      ).account?.tools
+    ).toBeNull()
   })
 
   test('names the plan and email of a signed-in agent', () => {

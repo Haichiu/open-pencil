@@ -11,6 +11,9 @@ ja:ai.aiSetupAgentNeedsAdapter
 ja:ai.aiSetupAgentNeedsAdmin
 ja:ai.aiSetupAgentNeedsNpm
 ja:ai.aiSetupAgentPromptHint
+ja:ai.aiSetupAgentTools
+ja:ai.aiSetupAgentToolsFailed
+ja:ai.aiSetupAgentToolsHint
 ja:ai.aiSetupConnectTitle
 ja:ai.aiSetupGapAddOpenRouter
 ja:ai.aiSetupGapCoveredByOpenRouter
@@ -221,6 +224,9 @@ zh-cn:ai.aiSetupAgentNeedsAdapter
 zh-cn:ai.aiSetupAgentNeedsAdmin
 zh-cn:ai.aiSetupAgentNeedsNpm
 zh-cn:ai.aiSetupAgentPromptHint
+zh-cn:ai.aiSetupAgentTools
+zh-cn:ai.aiSetupAgentToolsFailed
+zh-cn:ai.aiSetupAgentToolsHint
 zh-cn:ai.aiSetupConnectTitle
 zh-cn:ai.aiSetupGapAddOpenRouter
 zh-cn:ai.aiSetupGapCoveredByOpenRouter

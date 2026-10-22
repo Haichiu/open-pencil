@@ -2,7 +2,12 @@ import { ref } from 'vue'
 
 import { IS_TAURI, type ACPAgentDef, type ACPAgentID } from '@open-pencil/core/constants'
 
-import { checkAgentAuth, signInWithAgent, type AgentAuthCheck } from '@/app/ai/acp/auth/session'
+import {
+  checkAgentAuth,
+  signInWithAgent,
+  type AgentAuthCheck,
+  type ToolsProbe
+} from '@/app/ai/acp/auth/session'
 import type { AgentAuthMethod, AgentAuthStatus } from '@/app/ai/acp/auth/status'
 import { startTerminalSignIn, type TerminalSignIn } from '@/app/ai/acp/auth/terminal'
 
@@ -20,6 +25,8 @@ export interface AgentAccount {
   signInURL: string | null
   /** The sign-in reads a code pasted from its page. */
   acceptsCode: boolean
+  /** Whether a session reached OpenPencil's tools; null until a signed-in check says. */
+  tools: AgentAuthCheck['tools']
   error: 'check' | 'sign-in' | null
 }
 
@@ -31,6 +38,7 @@ const NOT_CHECKED: AgentAccount = {
   signingIn: false,
   signInURL: null,
   acceptsCode: false,
+  tools: null,
   error: null
 }
 
@@ -87,6 +95,7 @@ export function createAgentAccounts(options: {
         update(agent.id, {
           status: result.status,
           adapter: result.adapter,
+          tools: result.tools,
           canSignIn: signInMethod(agent) !== undefined
         })
         return undefined
@@ -164,9 +173,21 @@ export function createAgentAccounts(options: {
   return { supported: options.enabled, account, check, signIn, cancelSignIn, submitCode, report }
 }
 
+/** Starts a session as a chat does: in the agent workspace, linked to OpenPencil's tools. */
+const chatTools: ToolsProbe = {
+  cwd: async () => (await import('@/app/ai/agents/native')).agentWorkspace(),
+  link: async () => {
+    const [{ getAutomationAuthToken }, { linkOwnTools }] = await Promise.all([
+      import('@/app/automation/mcp/spawn'),
+      import('@/app/ai/acp/own-tools')
+    ])
+    return linkOwnTools(await getAutomationAuthToken())
+  }
+}
+
 export const agentAccounts = createAgentAccounts({
   enabled: IS_TAURI,
-  check: (agent) => checkAgentAuth(agent),
+  check: (agent) => checkAgentAuth(agent, { tools: chatTools }),
   signInWithAgent: (agent, methodId, signal) => signInWithAgent(agent, methodId, signal),
   startTerminalSignIn
 })
