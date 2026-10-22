@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import { SceneGraph } from '@open-pencil/scene-graph'
 
+import { readToolChange } from '@/app/ai/tools/changes/store'
 import { endRun, forgetAgentChat, startAgentRun } from '@/app/ai/tools/run'
 import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
 import { createAutomationCommandHandlers } from '@/app/automation/bridge/handlers'
@@ -55,19 +56,27 @@ describe("an ACP chat's edits during its reply", () => {
     ])
     expect(run.changedCalls.has('exec-1')).toBe(true)
     expect(store.undo.peekUndo()?.label).toBe('AI: create_shape')
+    // The card shows the change before and after, as for the built-in chat's calls.
+    expect(readToolChange('exec-1')?.jsx.after).toContain('Rectangle')
   })
 
   test('stay ordinary agent edits after the reply ended, from another chat, or elsewhere', async () => {
     const { store, target } = document()
     const other = document()
     const run = startAgentRun(store, CHAT)
-    await createRectangle(target, { kind: 'mcp', call: 'exec-1' })
-    await createRectangle(target, { kind: 'acp', chat: 'fedcba9876543210', call: 'exec-2' })
-    await createRectangle(other.target, { kind: 'acp', chat: CHAT, call: 'exec-3' })
+    await createRectangle(target, { kind: 'mcp', call: 'other-1' })
+    await createRectangle(target, { kind: 'acp', chat: 'fedcba9876543210', call: 'other-2' })
+    await createRectangle(other.target, { kind: 'acp', chat: CHAT, call: 'other-3' })
     endRun(store, run)
-    await createRectangle(target, { kind: 'acp', chat: CHAT, call: 'exec-4' })
+    await createRectangle(target, { kind: 'acp', chat: CHAT, call: 'other-4' })
 
     expect(run.undoCalls).toEqual([])
+    expect(['other-1', 'other-2', 'other-3', 'other-4'].map(readToolChange)).toEqual([
+      null,
+      null,
+      null,
+      null
+    ])
     expect(store.undo.peekUndo()?.label).toStartWith('Agent')
   })
 })
