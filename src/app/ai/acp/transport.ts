@@ -6,19 +6,24 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse
 } from '@agentclientprotocol/sdk'
+import { promiseTimeout } from '@vueuse/core'
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 
 import type { ACPAgentDef } from '@open-pencil/core/constants'
+import { randomHex } from '@open-pencil/scene-graph/random'
 
 import SYSTEM_PROMPT from '@/app/ai/chat/system-prompt'
 import { describeDiagnosticError, recordACPTransportFailure } from '@/app/diagnostics'
 import { buildACPMCPServers } from '@/app/integrations/mcp'
 
 import { parseAuthStatusUpdate } from './auth/status'
-import { mapUpdate } from './map-update'
+import { mapUpdate, textFromContent } from './map-update'
 import { spawnACPProcess } from './process'
 
 type TauriChild = Awaited<ReturnType<typeof spawnACPProcess>>['child']
+
+/** How long an agent may take to reach OpenPencil's tools once its session starts. */
+const TOOLS_CONNECT_TIMEOUT_MS = 20_000
 
 interface ACPSession {
   connection: ClientSideConnection
@@ -65,6 +70,15 @@ export function formatConnectionError(e: unknown, agentDef?: ACPAgentDef): strin
 /** ACP's `auth_required` error, which an agent returns for a new session before sign-in. */
 function isAuthRequiredError(e: unknown): boolean {
   return typeof e === 'object' && e !== null && 'code' in e && e.code === -32000
+}
+
+/** The agent never opened its session with OpenPencil's MCP server, so it has no design tools. */
+function toolsUnreachableError(agentDef: ACPAgentDef, reports: string[]): Error {
+  const reason = reports.at(-1)
+  return new Error(
+    `${agentDef.name} couldn't reach OpenPencil's tools, so your message wasn't sent.` +
+      (reason ? ` ${agentDef.name} reported: ${reason}` : '')
+  )
 }
 
 function startupError(error: unknown, agentDef: ACPAgentDef): Error {
@@ -252,16 +266,50 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
       throw startupError(e, this.agentDef)
     }
 
+    // The agent's MCP session carries the chat id, so the server can say this agent connected.
+    const chat = randomHex(16)
+    const { mcpRuntime } = await import('@/app/automation/mcp/runtime')
+    const { watchChatAgent } = await import('@/app/automation/agents')
+    // An older MCP server reports no sessions, so only a current one can confirm the agent.
+    const watch = mcpRuntime.agentSessionEvents ? watchChatAgent(chat) : null
+    // Before a prompt, a failed tool call is an MCP server the agent could not start.
+    const startupFailures: string[] = []
+    onUpdate = ({ update }) => {
+      if (update.sessionUpdate !== 'tool_call' || update.status !== 'failed') return
+      const text = textFromContent(update.content ?? undefined)
+      if (text?.includes('open-pencil')) startupFailures.push(text)
+    }
+
     let sessionResult
     try {
       sessionResult = await connection.newSession({
         cwd: this.cwd,
-        mcpServers: await buildACPMCPServers({ authorizationToken: automationAuthToken })
+        mcpServers: await buildACPMCPServers({ authorizationToken: automationAuthToken, chat })
       })
     } catch (e) {
+      watch?.stop()
       await child.kill().catch(() => undefined)
       throw startupError(e, this.agentDef)
     }
+
+    if (watch) {
+      try {
+        await Promise.race([
+          watch.connected,
+          promiseTimeout(TOOLS_CONNECT_TIMEOUT_MS).then((): never => {
+            throw new Error('no MCP session')
+          })
+        ])
+      } catch {
+        await child.kill().catch(() => undefined)
+        const error = toolsUnreachableError(this.agentDef, startupFailures)
+        recordACPTransportFailure({ operation: 'start', ...describeDiagnosticError(error) })
+        throw error
+      } finally {
+        watch.stop()
+      }
+    }
+    onUpdate = null
 
     const session: ACPSession = {
       connection,
