@@ -984,7 +984,8 @@ describe('MCP sessions as agents', () => {
         for (let attempt = 0; attempt < 50 && !openedNotice(browser); attempt++) {
           await Bun.sleep(10)
         }
-        expect(openedNotice(browser)?.args).not.toHaveProperty('chat')
+        const notice = expectDefined(openedNotice(browser), 'agent_session_opened notice')
+        expect(notice.args).not.toHaveProperty('chat')
       }
     )
   })

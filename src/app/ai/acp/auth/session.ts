@@ -168,9 +168,12 @@ type AuthSession = Awaited<ReturnType<typeof openAuthSession>>
 
 /** Starts a session as a chat would, sends nothing, and reports whether it reached the tools. */
 async function checkTools(session: AuthSession, probe: ToolsProbe): Promise<OwnToolsOutcome> {
-  const link = await probe.link()
-  session.onUpdate = (update) => link.noteUpdate(update)
+  let link: OwnToolsLink | null = null
   try {
+    // Linking reads the MCP server's token, which fails while the server is down.
+    link = await probe.link()
+    const linked = link
+    session.onUpdate = (update) => linked.noteUpdate(update)
     await session.untilStopped(
       session.connection.newSession({
         cwd: await probe.cwd(),
@@ -180,7 +183,7 @@ async function checkTools(session: AuthSession, probe: ToolsProbe): Promise<OwnT
     )
     return await session.untilStopped(link.outcome())
   } catch (error) {
-    link.stop()
+    link?.stop()
     return { connected: false, reason: error instanceof Error ? error.message : String(error) }
   } finally {
     session.onUpdate = null

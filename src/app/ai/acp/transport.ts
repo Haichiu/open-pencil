@@ -256,7 +256,14 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     }
 
     // The agent must reach OpenPencil's tools before it gets a prompt.
-    const tools = await linkOwnTools(automationAuthToken)
+    let tools: Awaited<ReturnType<typeof linkOwnTools>>
+    try {
+      tools = await linkOwnTools(automationAuthToken)
+    } catch (e) {
+      // An outside MCP connection whose credential cannot be read fails here.
+      await child.kill().catch(() => undefined)
+      throw startupError(e, this.agentDef)
+    }
     onUpdate = ({ update }) => tools.noteUpdate(update)
 
     let sessionResult

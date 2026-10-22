@@ -46,11 +46,13 @@ export async function linkOwnTools(authorizationToken: string | null): Promise<O
     import('@/app/automation/agents')
   ])
   const chat = randomHex(16)
+  // Built before watching, so a server list that fails to build leaves no chat waiting.
+  const mcpServers = await buildACPMCPServers({ authorizationToken, chat })
   // An older MCP server reports no sessions, so only a current one can confirm the agent.
   const watch = mcpRuntime.agentSessionEvents ? watchChatAgent(chat) : null
   const failures: string[] = []
   return {
-    mcpServers: await buildACPMCPServers({ authorizationToken, chat }),
+    mcpServers,
     meta: OWN_TOOLS_ALLOWED,
     noteUpdate(update) {
       if (update.sessionUpdate !== 'tool_call' || update.status !== 'failed') return

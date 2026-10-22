@@ -165,6 +165,8 @@ describe("a chat's agent reaching OpenPencil's tools", () => {
 
     agentSessionOpened({ session: 's-1', kind: 'acp', chat: 'fedcba9876543210' })
     agentSessionOpened({ session: 's-2', kind: 'mcp' })
+    // An outside MCP client naming the chat does not stand in for its ACP agent.
+    agentSessionOpened({ session: 's-4', kind: 'mcp', chat: '0123456789abcdef' })
     await Promise.resolve()
     expect(connected).toBe(false)
 

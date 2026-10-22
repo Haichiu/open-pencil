@@ -175,9 +175,10 @@ export function watchChatAgent(chat: string): { connected: Promise<void>; stop: 
   return { connected: deferred.promise, stop: () => waitingChats.delete(chat) }
 }
 
-/** The MCP server says an agent opened a session; a chat waiting for it may go on. */
+/** The MCP server says an agent opened a session; the ACP chat waiting for it may go on. */
 export function agentSessionOpened(args: unknown): void {
-  const chat = isUnknownRecord(args) ? args.chat : undefined
+  if (!isUnknownRecord(args) || args.kind !== 'acp') return
+  const { chat } = args
   if (typeof chat !== 'string') return
   waitingChats.get(chat)?.()
   waitingChats.delete(chat)

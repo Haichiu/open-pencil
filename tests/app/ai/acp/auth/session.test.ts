@@ -221,6 +221,21 @@ describe("checking a signed-in agent reaches OpenPencil's tools", () => {
     await agent.closed
   })
 
+  test('keeps the login when linking to the tools fails, as with the MCP server down', async () => {
+    const agent = fakeAgent({ status: SIGNED_IN, startsSessions: true })
+    const probe: ToolsProbe = {
+      cwd: async () => '/workspace',
+      link: async () => {
+        throw new Error('MCP server is not running')
+      }
+    }
+    const result = await checkAgentAuth(codex, { spawn: agent.spawn, tools: probe })
+    expect(result.status).toEqual(SIGNED_IN)
+    expect(result.tools).toEqual({ connected: false, reason: 'MCP server is not running' })
+    expect(agent.sessions).toHaveLength(0)
+    await agent.closed
+  })
+
   test('a session the agent refuses counts as unreachable, with its reason', async () => {
     const agent = fakeAgent({ status: SIGNED_IN })
     const { probe } = toolsProbe({ connected: true })
