@@ -215,6 +215,12 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
         controller.enqueue({ type: 'start' })
         controller.enqueue({ type: 'start-step' })
 
+        // Stopped while the agent started and reached its tools: the abort event already fired.
+        if (abortSignal?.aborted) {
+          finish('stop')
+          return
+        }
+
         connection
           .prompt({
             sessionId,
