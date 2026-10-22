@@ -1,0 +1,1 @@
+- Claude Code and Codex replies can revert and restore the edits they made, and the chat marks the calls you undid, as it does for provider models.
