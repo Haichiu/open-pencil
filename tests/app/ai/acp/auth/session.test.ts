@@ -41,6 +41,7 @@ function fakeAgent(options: {
   const toClient = new TransformStream<Uint8Array, Uint8Array>()
   const initialized: InitializeRequest[] = []
   const closed = createDeferred<undefined>()
+  const authenticating = createDeferred<undefined>()
   let connection: AgentSideConnection | null = null
   const push = (status: AgentAuthStatus) =>
     void connection?.extNotification(AUTH_STATUS_UPDATE_METHOD, { authStatus: status })
@@ -66,6 +67,7 @@ function fakeAgent(options: {
       throw new Error('Not used')
     },
     async authenticate() {
+      authenticating.resolve(undefined)
       // Without a login to report, the sign-in waits as an unfinished browser login does.
       if (!options.afterSignIn) return createDeferred<never>().promise
       push(options.afterSignIn)
@@ -94,7 +96,12 @@ function fakeAgent(options: {
       closed.resolve(undefined)
     }
   }
-  return { spawn: async () => streams, initialized, closed: closed.promise }
+  return {
+    spawn: async () => streams,
+    initialized,
+    closed: closed.promise,
+    authenticating: authenticating.promise
+  }
 }
 
 describe('checkAgentAuth', () => {
@@ -146,7 +153,8 @@ describe('signInWithAgent', () => {
     const agent = fakeAgent({ status: SIGNED_OUT })
     const controller = new AbortController()
     const signIn = signInWithAgent(codex, 'chat-gpt', controller.signal, { spawn: agent.spawn })
-    setTimeout(() => controller.abort(), 20)
+    await agent.authenticating
+    controller.abort()
     await expect(signIn).rejects.toThrow()
     await agent.closed
   })
