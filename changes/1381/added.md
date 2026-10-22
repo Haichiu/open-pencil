@@ -1,0 +1,1 @@
+- Settings → Usage counts the tokens of Claude Code, Codex, and Pi replies, shows cached input and cache writes, and lists each model's input and output tokens.
