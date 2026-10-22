@@ -120,7 +120,7 @@ describe('checkAgentAuth', () => {
     const agent = fakeAgent({ answersInitialize: false })
     await expect(
       checkAgentAuth(codex, { spawn: agent.spawn, initializeTimeoutMs: 20 })
-    ).rejects.toBe('The agent did not start.')
+    ).rejects.toThrow('The agent did not start.')
     await agent.closed
   })
 
