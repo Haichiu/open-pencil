@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
 
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { fromUint8Array } from 'js-base64'
 
 import { createCloudAPIClient } from '@open-pencil/cloud/client'
@@ -17,10 +19,27 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 
 /** Just enough of a Cloud server and its object store to save and open documents. */
 function cloudServer() {
-  type Doc = { name: string; revision: string | null; version: number; checksum?: string }
+  type Image = { name: string; checksum: string }
+  type Doc = {
+    name: string
+    revision: string | null
+    version: number
+    checksum?: string
+    images?: Image[]
+  }
   const documents = new Map<string, Doc>()
   const objects = new Map<string, Uint8Array>()
-  const uploads = new Map<string, { documentId: string; base: string | null }>()
+  let fullReads = 0
+  let cancelledReads = 0
+  /**
+   * How the object store answers a range: as asked, by ignoring it, with more or fewer bytes
+   * than asked and no `Content-Range` to tell, or with another range than asked.
+   */
+  let ranges: 'honored' | 'ignored' | 'oversized' | 'short' | 'other' = 'honored'
+  const uploads = new Map<string, { documentId: string; base: string | null; image?: string }>()
+  /** The workspace's images by checksum, as the object key their upload put them under. */
+  const images = new Map<string, string>()
+  const imageUploads: string[] = []
   const summary = (id: string, doc: Doc) => ({
     id,
     workspaceId: WORKSPACE,
@@ -76,15 +95,65 @@ function cloudServer() {
     ],
     [
       'POST',
+      /^\/documents\/([^/]+)\/images$/,
+      ([, documentId = ''], body) => {
+        const requested = Array.isArray(body.images) ? body.images : []
+        const offers = requested.flatMap((image: { checksum: string }) => {
+          if (images.has(image.checksum)) return []
+          const uploadId = crypto.randomUUID()
+          uploads.set(uploadId, { documentId, base: null, image: image.checksum })
+          imageUploads.push(image.checksum)
+          return [
+            {
+              checksum: image.checksum,
+              uploadId,
+              upload: {
+                kind: 'single',
+                url: `https://objects.test/${uploadId}`,
+                method: 'PUT',
+                headers: {},
+                expiresAt: '2030-01-01T00:00:00.000Z'
+              }
+            }
+          ]
+        })
+        return json({ uploads: offers }, 201)
+      }
+    ],
+    [
+      'POST',
+      /^\/documents\/([^/]+)\/images\/commit$/,
+      (_match, body) => {
+        const committed = (Array.isArray(body.uploads) ? body.uploads : []) as {
+          uploadId: string
+        }[]
+        for (const { uploadId } of committed) {
+          const image = uploads.get(uploadId)?.image
+          if (image) images.set(image, uploadId)
+        }
+        return new Response(null, { status: 204 })
+      }
+    ],
+    [
+      'POST',
       /^\/uploads\/([^/]+)\/commit$/,
       ([, uploadId = ''], body) => {
         const upload = uploads.get(uploadId)
         const doc = upload ? documents.get(upload.documentId) : undefined
         if (!upload || !doc) return json({ error: { code: 'not_found' } }, 404)
+        const named = (Array.isArray(body.images) ? body.images : []) as Image[]
+        if (named.some((image) => !images.has(image.checksum))) {
+          return json({ error: { code: 'invalid_upload' } }, 422)
+        }
         if (doc.revision !== upload.base) return json({ error: { code: 'revision_conflict' } }, 409)
         const revision = crypto.randomUUID()
         objects.set(revision, objects.get(uploadId) ?? new Uint8Array())
-        Object.assign(doc, { revision, version: doc.version + 1, checksum: String(body.checksum) })
+        Object.assign(doc, {
+          revision,
+          version: doc.version + 1,
+          checksum: String(body.checksum),
+          images: named
+        })
         return json({ document: summary(upload.documentId, doc) })
       }
     ],
@@ -103,7 +172,20 @@ function cloudServer() {
             byteSize: bytes.byteLength,
             checksum: doc.checksum ?? (await sha256(bytes)),
             contentType: 'application/octet-stream',
-            download: { ...download, expiresAt: '2030-01-01T00:00:00.000Z' }
+            download: { ...download, expiresAt: '2030-01-01T00:00:00.000Z' },
+            images: (doc.images ?? []).map((image) => {
+              const key = images.get(image.checksum) ?? ''
+              return {
+                ...image,
+                byteSize: objects.get(key)?.byteLength ?? 0,
+                download: {
+                  url: `https://objects.test/${key}`,
+                  method: 'GET',
+                  headers: {},
+                  expiresAt: '2030-01-01T00:00:00.000Z'
+                }
+              }
+            })
           }
         })
       }
@@ -128,7 +210,46 @@ function cloudServer() {
       return new Response(null, { status: 200 })
     }
     const bytes = objects.get(key)
-    return bytes ? new Response(Uint8Array.from(bytes)) : new Response(null, { status: 404 })
+    if (!bytes) return new Response(null, { status: 404 })
+    const range = /^bytes=(\d+)-(\d+)$/.exec(new Headers(init.headers).get('Range') ?? '')
+    if (!range) {
+      fullReads += 1
+      return new Response(Uint8Array.from(bytes))
+    }
+    const [, first = '0', last = '0'] = range
+    const start = Number(first)
+    const end = Number(last) + 1
+    // A chunk at a time, so a reader can stop it partway.
+    const streamed = (from: number, to: number) => {
+      let offset = from
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(bytes.slice(offset, Math.min(offset + 1024, to)))
+          offset += 1024
+          if (offset >= to) controller.close()
+        },
+        cancel() {
+          cancelledReads += 1
+        }
+      })
+    }
+    if (ranges === 'ignored') {
+      fullReads += 1
+      return new Response(streamed(0, bytes.byteLength))
+    }
+    const sent = {
+      honored: [start, end],
+      oversized: [start, bytes.byteLength],
+      short: [start, end - 1],
+      other: [start + 1, end + 1]
+    }[ranges]
+    const [from = start, to = end] = sent
+    // A store whose CORS rules hide `Content-Range` leaves only the body's length to go by.
+    const headers: Record<string, string> =
+      ranges === 'oversized' || ranges === 'short'
+        ? {}
+        : { 'Content-Range': `bytes ${from}-${to - 1}/${bytes.byteLength}` }
+    return new Response(streamed(from, to), { status: 206, headers })
   }
 
   /** Someone else saves the document, moving its revision on. */
@@ -138,7 +259,19 @@ function cloudServer() {
   }
 
   const client = createCloudAPIClient('https://cloud.test/api', { fetch: api })
-  return { client, objectFetch, saveElsewhere, objects }
+  return {
+    client,
+    objectFetch,
+    saveElsewhere,
+    objects,
+    /** The checksums of every image an upload was offered for. */
+    imageUploads,
+    fullReads: () => fullReads,
+    cancelledReads: () => cancelledReads,
+    answerRanges(answer: typeof ranges) {
+      ranges = answer
+    }
+  }
 }
 
 function adapter(server: ReturnType<typeof cloudServer>) {
@@ -167,6 +300,45 @@ describe('Cloud storage adapter', () => {
     const opened = await storage.getDocument(id)
     expect(new TextDecoder().decode(opened.bytes)).toBe('design')
     expect(opened.revision).toBe(saved.revision)
+  })
+
+  test('stores a file without its images, uploads only images it lacks, and opens it whole', async () => {
+    const server = cloudServer()
+    const storage = adapter(server)
+    const photo = crypto.getRandomValues(new Uint8Array(4096))
+    const logo = crypto.getRandomValues(new Uint8Array(512))
+    const archive = (pages: string) =>
+      zipSync({
+        'canvas.fig': strToU8(pages),
+        'meta.json': strToU8('{}'),
+        'images/a1b2': photo,
+        'images/c3d4': logo,
+        // Cloud stores apart only names it accepts; this one stays inside the file.
+        'images/old name.png': logo,
+        // Nor does an empty image, which the server refuses to store.
+        'images/e5f6': new Uint8Array()
+      })
+    const first = crypto.randomUUID()
+    const saved = await storage.putDocument(first, archive('first'), { name: 'A', updatedAt: '' })
+    const stored = saved.revision ? server.objects.get(saved.revision) : undefined
+    if (!stored) throw new Error('Expected the stored file')
+    expect(Object.keys(unzipSync(stored)).sort()).toEqual([
+      'canvas.fig',
+      'images/e5f6',
+      'images/old name.png',
+      'meta.json'
+    ])
+    expect(server.imageUploads).toHaveLength(2)
+
+    // Another document with the same images uploads neither.
+    await storage.putDocument(crypto.randomUUID(), archive('second'), { name: 'B', updatedAt: '' })
+    expect(server.imageUploads).toHaveLength(2)
+
+    const opened = unzipSync((await storage.getDocument(first)).bytes)
+    expect(strFromU8(opened['canvas.fig'] ?? new Uint8Array())).toBe('first')
+    expect(opened['images/a1b2']).toEqual(photo)
+    expect(opened['images/c3d4']).toEqual(logo)
+    expect(opened['images/old name.png']).toEqual(logo)
   })
 
   test('saves on top of the revision it was edited from', async () => {
@@ -214,5 +386,46 @@ describe('Cloud storage adapter', () => {
     })
     server.objects.set(saved.revision ?? '', new Uint8Array([9, 9, 9]))
     await expect(storage.getDocument(id)).rejects.toThrow('does not match')
+  })
+
+  test('reads a document’s preview without downloading the whole file', async () => {
+    const server = cloudServer()
+    const storage = adapter(server)
+    const id = crypto.randomUUID()
+    const figBytes = new Uint8Array(readFileSync('tests/fixtures/gold-preview.fig'))
+    await storage.putDocument(id, figBytes, { name: 'Preview', updatedAt: '' })
+    const thumbnail = await storage.getThumbnail?.(id)
+    expect(thumbnail?.subarray(0, 8)).toEqual(
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    )
+    expect(server.fullReads()).toBe(0)
+  })
+
+  test('gives up on a preview when the object store sends the whole file', async () => {
+    const server = cloudServer()
+    const storage = adapter(server)
+    const id = crypto.randomUUID()
+    const figBytes = new Uint8Array(readFileSync('tests/fixtures/gold-preview.fig'))
+    await storage.putDocument(id, figBytes, { name: 'Preview', updatedAt: '' })
+    server.answerRanges('ignored')
+    await expect(storage.getThumbnail?.(id) ?? Promise.resolve()).rejects.toThrow('HTTP 200')
+    expect(server.cancelledReads()).toBe(1)
+  })
+
+  test('takes only the range it asked for, stopping one that runs on', async () => {
+    const server = cloudServer()
+    const storage = adapter(server)
+    const id = crypto.randomUUID()
+    const figBytes = new Uint8Array(readFileSync('tests/fixtures/gold-preview.fig'))
+    await storage.putDocument(id, figBytes, { name: 'Preview', updatedAt: '' })
+    const preview = () => storage.getThumbnail?.(id) ?? Promise.resolve()
+
+    server.answerRanges('oversized')
+    await expect(preview()).rejects.toThrow('more than')
+    expect(server.cancelledReads()).toBeGreaterThan(0)
+    server.answerRanges('short')
+    await expect(preview()).rejects.toThrow('sent')
+    server.answerRanges('other')
+    await expect(preview()).rejects.toThrow('HTTP 206 (bytes')
   })
 })

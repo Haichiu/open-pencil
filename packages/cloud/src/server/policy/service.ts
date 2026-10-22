@@ -1,7 +1,7 @@
 import type { WorkspaceEntitlements } from '#cloud/contract'
 import type { CloudDatabase } from '#cloud/server/db'
+import { DocumentNotFoundError } from '#cloud/server/documents/errors'
 import { workspaceRole } from '#cloud/server/documents/repository'
-import { DocumentNotFoundError } from '#cloud/server/documents/service'
 import { createStorageQuotaService } from '#cloud/server/quota'
 import type { Kysely } from 'kysely'
 
@@ -31,9 +31,11 @@ export function createEntitlementService(
         guestPresence,
         collaboration,
         revisionHistory,
+        cloudAI,
         maximumFileBytes,
         maximumStorage,
         maximumParticipants,
+        monthlyCreditAllowance,
         usage
       ] = await Promise.all([
         policy.boolean(CLOUD_FEATURE_KEYS.capabilityLinks, false, context),
@@ -42,6 +44,7 @@ export function createEntitlementService(
         policy.boolean(CLOUD_FEATURE_KEYS.guestPresence, false, context),
         policy.boolean(CLOUD_FEATURE_KEYS.collaboration, false, context),
         policy.boolean(CLOUD_FEATURE_KEYS.revisionHistory, false, context),
+        policy.boolean(CLOUD_FEATURE_KEYS.cloudAI, false, context),
         policy.number(CLOUD_FEATURE_KEYS.maximumFileBytes, technicalMaximumFileBytes, context),
         policy.number(CLOUD_FEATURE_KEYS.maximumStorageBytes, Number.MAX_SAFE_INTEGER, context),
         policy.number(
@@ -49,6 +52,7 @@ export function createEntitlementService(
           technicalMaximumParticipants,
           context
         ),
+        policy.number(CLOUD_FEATURE_KEYS.monthlyCreditAllowance, -1, context),
         quota.snapshot(workspaceId)
       ])
       // Technical limits are ceilings: an entitlement can lower them but never raise them.
@@ -60,12 +64,14 @@ export function createEntitlementService(
           anonymousEdit,
           guestPresence,
           collaboration,
-          revisionHistory
+          revisionHistory,
+          cloudAI
         },
         limits: {
           maximumFileBytes: Math.min(technicalMaximumFileBytes, maximumFileBytes),
           maximumStorageBytes: maximumStorage === Number.MAX_SAFE_INTEGER ? null : maximumStorage,
-          maximumParticipants: participants === Number.MAX_SAFE_INTEGER ? null : participants
+          maximumParticipants: participants === Number.MAX_SAFE_INTEGER ? null : participants,
+          monthlyCreditAllowance: monthlyCreditAllowance < 0 ? null : monthlyCreditAllowance
         },
         usage: {
           committedStorageBytes: usage.committedBytes,

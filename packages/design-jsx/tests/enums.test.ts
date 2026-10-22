@@ -4,6 +4,7 @@ import {
   BLEND_MODE,
   CONSTRAINT,
   MASK_TYPE,
+  FIGJAM_TEXT_SIZE,
   STROKE_ALIGN,
   STROKE_CAP,
   STROKE_JOIN,
@@ -110,5 +111,22 @@ describe('design JSX enums', () => {
     )
     expect(node.textDecorationStyle).toBe('WAVY')
     expect(warnings).toEqual([])
+  })
+
+  test('a sticky text size reads as its camelCase name in any case, and an unknown one warns', async () => {
+    expect(FIGJAM_TEXT_SIZE.parse('extralarge')).toBe('extraLarge')
+    expect(FIGJAM_TEXT_SIZE.print('extraLarge')).toBe('extraLarge')
+    const { warnings } = await render('<Sticky textSize="giant">Hi</Sticky>')
+    expect(warnings[0]).toStartWith('Unknown textSize "giant" on <sticky> is ignored')
+  })
+
+  test('a connector cap is spelled as strokeCap spells it, and an unknown one warns', async () => {
+    const { graph, warnings } = await render(
+      '<Frame><Rectangle name="A" /><Rectangle name="B" /><Connector from="A" to="B" startCap="circle_filled" endCap="arrow" /></Frame>'
+    )
+    const connector = [...graph.getAllNodes()].find((node) => node.type === 'CONNECTOR')
+    expect(connector?.connectorStartCap).toBe('CIRCLE_FILLED')
+    expect(connector?.connectorEndCap).toBe('ARROW_LINES')
+    expect(warnings[0]).toStartWith('Unknown endCap "arrow" on <connector> is ignored')
   })
 })

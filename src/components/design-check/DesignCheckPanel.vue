@@ -12,7 +12,8 @@ import { designCheck } from '@/theme/design-check'
 import DesignCheckRulesMenu from './DesignCheckRulesMenu.vue'
 import IssueGroup from './IssueGroup.vue'
 import SeverityFilters from './SeverityFilters.vue'
-import { useDesignCheckPanel, type DesignCheckScope } from './useDesignCheckPanel'
+import type { DesignCheckScope } from './types'
+import { useDesignCheckPanel } from './useDesignCheckPanel'
 
 const { active, initialScope = 'page' } = defineProps<{
   active: boolean
@@ -36,6 +37,7 @@ const {
   isGroupOpen,
   setGroupOpen,
   clearFilters,
+  showMoreRows,
   hoverRow
 } = useDesignCheckPanel({ active: () => active, list, initialScope })
 
@@ -100,6 +102,7 @@ const scopeModel = computed({
         @fix="(row) => row.action && check.applyFixes([row.action.request])"
         @fix-all="check.applyFixes(group.fixes)"
         @turn-off="turnOffDesignCheckRule(group.ruleId)"
+        @show-more="showMoreRows(group.ruleId)"
       />
     </div>
   </section>

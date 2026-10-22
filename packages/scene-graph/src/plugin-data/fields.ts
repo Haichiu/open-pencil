@@ -4,6 +4,7 @@ import { behaviourSchema } from '../behaviours/schema'
 import type { OkHCLPayload } from '../color/okhcl'
 import { isExportFormatId, type ExportFormatId } from '../export-format'
 import { clampExportScale } from '../export-scale'
+import { FIG_COMPRESSIONS } from '../fig-compression'
 import { iconSchema, iconTintSchema } from '../icons/schema'
 import type { Rect } from '../primitives'
 import { shaderPaintSchema } from '../shaders/schema'
@@ -104,13 +105,16 @@ const cssText = v.pipe(v.string(), v.trim(), v.nonEmpty(), v.maxLength(1000))
 /** Token fields Figma has no slot for, with mode ids as the file spells them. */
 export interface StoredToken {
   unit?: TokenUnit
-  expressions?: Record<string, { css: string; resolved: number }>
+  expressions?: Record<string, { css: string; resolved?: number }>
 }
 
 const token: v.GenericSchema<unknown, StoredToken> = v.object({
   unit: v.optional(v.picklist(TOKEN_UNITS)),
   expressions: v.optional(
-    v.record(v.string(), v.object({ css: cssText, resolved: v.pipe(v.number(), v.finite()) }))
+    v.record(
+      v.string(),
+      v.object({ css: cssText, resolved: v.optional(v.pipe(v.number(), v.finite())) })
+    )
   )
 })
 
@@ -199,6 +203,15 @@ export const OPEN_PENCIL_PLUGIN_DATA = {
   textPathBox: jsonPluginDataField('textPathBox', 'format', textPathBox),
   /** The library asset a node was inserted from. */
   librarySource: jsonPluginDataField('librarySource', 'bookkeeping', librarySource),
+  /**
+   * The document root's id, on the DOCUMENT node, whose own GUID is always Figma's `0:0`; the
+   * root keeps it across a save as every layer keeps its GUID.
+   */
+  documentId: jsonPluginDataField(
+    'documentId',
+    'bookkeeping',
+    v.pipe(v.string(), v.nonEmpty(), v.maxLength(64))
+  ),
   /** Libraries enabled for the document, on the DOCUMENT node. */
   enabledLibraries: jsonPluginDataField('enabledLibraries', 'bookkeeping', enabledLibraries),
   /** The library this document publishes as, on the DOCUMENT node. */
@@ -211,6 +224,8 @@ export const OPEN_PENCIL_PLUGIN_DATA = {
   comments: jsonPluginDataField('comments', 'bookkeeping', comments),
   /** The statuses layers can be in, on the DOCUMENT node. */
   statuses: jsonPluginDataField('statuses', 'bookkeeping', statusWorkflowSchema),
+  /** How tightly the document's `.fig` data is compressed, on the DOCUMENT node. */
+  figCompression: textPluginDataField('figCompression', 'bookkeeping', FIG_COMPRESSIONS),
   /** A layer's status, any state of the workflow; Figma's `sectionStatusInfo` knows only two. */
   status: jsonPluginDataField('status', 'format', nodeStatusSchema),
   /** Unit and CSS expressions, on each VARIABLE. */

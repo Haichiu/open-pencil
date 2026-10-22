@@ -3,6 +3,7 @@ import { isEqual, omitBy, pick } from 'es-toolkit'
 import {
   createDefaultNode,
   layoutSizing,
+  type ArcData,
   type SceneGraph,
   type SceneNode
 } from '@open-pencil/scene-graph'
@@ -124,6 +125,8 @@ function collectAppearanceProps(node: SceneNode, props: JSXProp[]): void {
   if (node.cornerSmoothing > 0) props.push(['cornerSmoothing', node.cornerSmoothing])
   if (node.opacity < 1) props.push(['opacity', Math.round(node.opacity * 100) / 100])
   if (node.rotation !== 0) props.push(['rotate', Math.round(node.rotation * 100) / 100])
+  if (node.flipX) props.push(['flipX', true])
+  if (node.flipY) props.push(['flipY', true])
   if (node.blendMode !== 'PASS_THROUGH' && node.blendMode !== 'NORMAL') {
     props.push(['blendMode', BLEND_MODE.print(node.blendMode)])
   }
@@ -144,6 +147,21 @@ function collectPositionProps(
   }
   if (node.x !== 0) props.push(['x', node.x])
   if (node.y !== 0) props.push(['y', node.y])
+}
+
+/** A layer's opacity and whether it is hidden, for an element that writes its own props. */
+export function presenceProps(node: SceneNode): JSXProp[] {
+  const props: JSXProp[] = []
+  if (node.opacity < 1) props.push(['opacity', Math.round(node.opacity * 100) / 100])
+  if (!node.visible) props.push(['visible', false])
+  return props
+}
+
+/** Where a layer sits in its parent, as the export writes any layer's position. */
+export function positionProps(node: SceneNode, graph: SceneGraph): JSXProp[] {
+  const props: JSXProp[] = []
+  collectPositionProps(node, getNodeContext(node, graph), props)
+  return props
 }
 
 function collectSizingProps(
@@ -277,7 +295,21 @@ function collectTextAutoResizeProp(
   }
 }
 
+const roundDegrees = (radians: number) => Math.round(((radians * 180) / Math.PI) * 10_000) / 10_000
+
+/** An ellipse's arc, written only where it is not a whole ellipse. */
+function collectArcProps(arc: ArcData | null, props: JSXProp[]): void {
+  if (!arc) return
+  const start = roundDegrees(arc.startingAngle)
+  const end = roundDegrees(arc.endingAngle)
+  if (start !== 0) props.push(['startAngle', start])
+  // A whole turn from the start is the default end.
+  if (Math.abs(end - (start + 360)) > 1e-6) props.push(['endAngle', end])
+  if (arc.innerRadius !== 0) props.push(['innerRadius', arc.innerRadius])
+}
+
 function collectShapeNodeProps(node: SceneNode, props: JSXProp[]): void {
+  if (node.type === 'ELLIPSE') collectArcProps(node.arcData, props)
   if (node.type === 'STAR') {
     if (node.pointCount !== 5) props.push(['points', node.pointCount])
     if (node.starInnerRadius !== 0.382) props.push(['innerRadius', node.starInnerRadius])

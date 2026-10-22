@@ -26,6 +26,28 @@ openpencil eval design.fig -c "
 "
 ```
 
+## Variable formulas
+
+Use `openpencil.setVariableFormula(collectionName, variableName, source, modeName?)` to replace a variable's definition with a formula. It validates before changing the document and returns the resolved value. Omitting the mode name edits the collection's default mode.
+
+```js
+openpencil.setVariableFormula('Spacing', 'large', '{base} * 2')
+openpencil.setVariableFormula('State', 'visible', '{viewport} > 1024 and not {loading}')
+openpencil.setVariableFormula('Copy', 'greeting', 'if({compact}, "Hi", "Hello, " + {name})')
+```
+
+References use variable names or `{Collection::variable}` and are stored as stable IDs. Formulas use stored units, so lengths are in pixels. See [Variables](/user-guide/variables) for operators and export limitations.
+
+## Variable bindings
+
+Figma's `node.setBoundVariable(field, variable)` binds with Figma's field names and type rules. Use `openpencil.bindVariable(node, field, variable)` to bind a layer field to a variable from `figma.variables` the way the layer panel does, and `openpencil.unbindVariable(node, field)` to let it go; the field keeps the value the variable last gave it. Fields use OpenPencil's names, such as `text`, `visible`, `opacity`, `paddingLeft` or `fills/0/color`. Bindings follow the layer panel, which takes more than Figma's `setBoundVariable`: text content takes a text or number variable, a number shown as text, and visibility a boolean or a text variable that shows the layer unless it is empty or reads `false`, `no` or `off`.
+
+```js
+const [price] = figma.variables.getLocalVariables('FLOAT')
+const label = figma.currentPage.findOne((node) => node.name === 'Price')
+openpencil.bindVariable(label, 'text', price)
+```
+
 ## Query nodes
 
 ```sh
@@ -139,6 +161,13 @@ openpencil eval design.fig -w -c '
 - `openpencil.getStatus(node)` reads the name of the status a layer shows, or `null`, also while a section around it shows its own.
 - `openpencil.setStatus(node, name)` sets one by name, and `null` clears it. Only sections, frames, components, component sets, and instances directly on a page or in a section take one; anything else fails with an error that says why, and an unknown name lists the statuses there are.
 
+Layer features Figma's API has no member for:
+
+- `openpencil.getLayoutDirection(node)` / `setLayoutDirection(node, direction)` and `getTextDirection(node)` / `setTextDirection(node, direction)` read and set which way an auto layout or a text runs: `AUTO`, `LTR`, or `RTL`.
+- `openpencil.getFillOkHCL(node, index?)` / `setFillOkHCL(node, color, index?)` and the `Stroke` pair read and set a paint's color in OkHCL, `{ h, c, l, a? }`; its RGB follows in the document's color space.
+- `openpencil.exposeInstanceSwap(instances, candidates, name?)` exposes swapping those instances as one instance swap property offering the candidate components, and returns the layer that holds it.
+- `openpencil.getFontStatus()` reports whether the current page's fonts are available: the faces asked for, where each loaded from, substitutions, and the layers affected.
+
 ## Supported API surface
 
 The API is intentionally close to Figma's Plugin API, but it maps to OpenPencil's scene graph and file format.
@@ -184,22 +213,18 @@ The API is intentionally close to Figma's Plugin API, but it maps to OpenPencil'
 
 - `figma.createComponentFromNode(node)`
 - `figma.combineAsVariants(components, parent)` — properties come from names such as `State=On, Size=Large`
+- On a component set, `addComponentProperty(name, 'VARIANT', value)` appends the value to every variant's name and `editComponentProperty(name, { name })` renames the property in them, which instances follow; renaming a variant updates the set's values, and `variantProperties` reads a variant's or an instance's values
 - `component.createInstance()`
 - `instance.mainComponent`
 
 ### Variables
 
-- `figma.getLocalVariables(type?)`
-- `figma.getVariableById(id)`
-- `figma.getLocalVariableCollections()`
-- `figma.getVariableCollectionById(id)`
-- `figma.createVariable(name, type, collectionId, value?)`
-- `figma.setVariableValue(variableId, modeId, value)`
-- `figma.deleteVariable(id)`
-- `figma.createVariableCollection(name)`
-- `figma.deleteVariableCollection(id)`
-- `figma.bindVariable(nodeId, field, variableId)`
-- `figma.unbindVariable(nodeId, field)`
+- `figma.variables.getLocalVariables(type?)`, `getVariableById(id)`, `getLocalVariableCollections()`, `getVariableCollectionById(id)`, and their `…Async` forms
+- `figma.variables.createVariableCollection(name)` and `createVariable(name, collection, resolvedType)`, which starts every mode at Figma's default
+- `figma.variables.createVariableAlias(variable)` and `setBoundVariableForPaint(paint, 'color', variable)`
+- `variable.setValueForMode(modeId, value)`, `valuesByMode`, `resolveForConsumer(node)`, `name`, `description`, `scopes`, `codeSyntax`, and `remove()`
+- `collection.addMode(name)`, `renameMode(modeId, name)`, `removeMode(modeId)`, `modes`, `defaultModeId`, `variableIds`, and `remove()`
+- `node.boundVariables`, `node.setBoundVariable(field, variable)`, `node.setExplicitVariableModeForCollection(collection, modeId)`, and `node.clearExplicitVariableModeForCollection(collection)`
 
 ### Properties
 
@@ -233,8 +258,7 @@ Common node properties are readable/writable through the proxy, including:
 These Figma APIs are not exposed as compatible helpers yet:
 
 - `node.exportAsync()`
-- `node.setBoundVariable(field, variable)`
-- `figma.combineAsVariants(components, parent)`
+- Library variables, extended collections, and variable bindings on effects and layout grids
 - Figma style APIs such as `figma.createPaintStyle()` / `figma.createTextStyle()`
 - Full vector boolean operation parity
 

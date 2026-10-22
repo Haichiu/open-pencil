@@ -1,4 +1,5 @@
 import {
+  attachedConnectors,
   createsComponentCycle,
   recordInstanceOverride,
   slotPropertyId
@@ -14,26 +15,24 @@ import type {
   LayoutGrid,
   LayoutMode
 } from '@open-pencil/scene-graph'
-import {
-  getFillOkHCL,
-  getStrokeOkHCL,
-  setNodeFillOkHCL,
-  setNodeStrokeOkHCL
-} from '@open-pencil/scene-graph/color'
-import type { OkHCLColor, OkHCLPayload } from '@open-pencil/scene-graph/color'
 import type { Rect, Vector } from '@open-pencil/scene-graph/primitives'
+import type { ShapeWithTextType } from '@open-pencil/scene-graph/shape-with-text'
 
 import { assertNodeEditable } from '#core/editor/capabilities'
 import type { FigmaEffect } from '#core/figma-api/effects'
 
 import { prepareFollowedFieldEdit, fitGroupsAround } from './accessor-utils'
 import { installBasicNodeProxyAccessors } from './accessors/basic'
+import { installConnectorNodeProxyAccessors } from './accessors/connector'
 import { installLayoutNodeProxyAccessors } from './accessors/layout'
 import { installStickyNodeProxyAccessors, pluginChildren } from './accessors/sticky'
 import { installStrokeNodeProxyAccessors } from './accessors/strokes'
 import { installTextNodeProxyAccessors } from './accessors/text'
 import { installTextRangeMethods, type TextRangeMethods } from './accessors/text/ranges'
-import { installVariableModeNodeProxyAccessors } from './accessors/variables'
+import {
+  installVariableModeNodeProxyAccessors,
+  type VariableNodeMembers
+} from './accessors/variables'
 import {
   installVectorNodeProxyAccessors,
   type FigmaVectorNetwork,
@@ -50,8 +49,9 @@ import type { FigmaFontName } from './fonts'
 import type { FigmaFrameNode, FigmaInstanceNode } from './node-types'
 import { installInstanceOverrideAccessors, type FigmaInstanceOverride } from './overrides'
 import { getPageBackgrounds, setPageBackgrounds } from './page-backgrounds'
-import * as PluginData from './plugin-data'
+import { installPluginDataMethods, type PluginDataMethods } from './plugin-data'
 import { nodeProxyToJSON } from './serialization'
+import { installShapeWithTextAccessors } from './shape-with-text'
 import { installSlotAccessors, prepareSlotMove, prepareSlotRemoval } from './slots'
 import type { FigmaLetterSpacing, FigmaLineHeight } from './text'
 import * as TextProxy from './text'
@@ -128,7 +128,6 @@ export class FigmaNodeProxy {
 
   declare layoutMode: LayoutMode
   declare layoutGrids: readonly LayoutGrid[]
-  declare layoutDirection: string
   declare primaryAxisAlignItems: string
   declare counterAxisAlignItems: string
   declare itemSpacing: number
@@ -162,14 +161,25 @@ export class FigmaNodeProxy {
   declare vectorNetwork: FigmaVectorNetwork
   declare setVectorNetworkAsync: (vectorNetwork: FigmaVectorNetwork) => Promise<void>
   declare handleMirroring: SceneNode['handleMirroring'] | typeof MIXED
-  declare readonly explicitVariableModes: Readonly<Record<string, string>>
-  declare readonly resolvedVariableModes: Readonly<Record<string, string>>
+  declare getPluginData: PluginDataMethods['getPluginData']
+  declare setPluginData: PluginDataMethods['setPluginData']
+  declare getPluginDataKeys: PluginDataMethods['getPluginDataKeys']
+  declare getSharedPluginData: PluginDataMethods['getSharedPluginData']
+  declare setSharedPluginData: PluginDataMethods['setSharedPluginData']
+  declare getSharedPluginDataKeys: PluginDataMethods['getSharedPluginDataKeys']
+  declare readonly explicitVariableModes: VariableNodeMembers['explicitVariableModes']
+  declare readonly resolvedVariableModes: VariableNodeMembers['resolvedVariableModes']
+  declare setExplicitVariableModeForCollection: VariableNodeMembers['setExplicitVariableModeForCollection']
+  declare clearExplicitVariableModeForCollection: VariableNodeMembers['clearExplicitVariableModeForCollection']
+  declare readonly boundVariables: VariableNodeMembers['boundVariables']
+  declare setBoundVariable: VariableNodeMembers['setBoundVariable']
   declare readonly overrides: FigmaInstanceOverride[] | undefined
-  /** A sticky note's body, its author line, and whether it is wide; undefined on other layers. */
+  /** A sticky note's body or a shape's label, a sticky's author line, and whether it is wide. */
   declare readonly text: FigmaNodeProxy | undefined
   declare readonly authorName: string | undefined
   declare authorVisible: boolean | undefined
   declare isWideWidth: boolean | undefined
+  declare shapeType: ShapeWithTextType | undefined
   declare resetOverrides: () => void
 
   declare strokeWeight: number
@@ -189,7 +199,6 @@ export class FigmaNodeProxy {
   declare fontWeight: number | symbol
   declare textAlignHorizontal: string
   declare textAlignVertical: string
-  declare textDirection: string
   declare textAutoResize: string
   declare letterSpacing: FigmaLetterSpacing | symbol
   declare lineHeight: FigmaLineHeight | symbol
@@ -450,7 +459,10 @@ export class FigmaNodeProxy {
     assertNodeEditable(this[INTERNAL_GRAPH], this[INTERNAL_ID])
     prepareSlotRemoval(this[INTERNAL_GRAPH], this[INTERNAL_ID])
     const parentId = this._raw().parentId
+    // Connectors go with a layer they attach to, as Figma removes them.
+    const attached = attachedConnectors(this[INTERNAL_GRAPH], [this[INTERNAL_ID]])
     this[INTERNAL_GRAPH].deleteNode(this[INTERNAL_ID])
+    for (const connector of attached) this[INTERNAL_GRAPH].deleteNode(connector.id)
     fitGroupsAround(this[INTERNAL_GRAPH], parentId, this[INTERNAL_API].groupFitOptions)
   }
 
@@ -486,54 +498,6 @@ export class FigmaNodeProxy {
       this[INTERNAL_API],
       this[INTERNAL_ID],
       criteria
-    )
-  }
-
-  // --- Plugin data ---
-
-  getPluginData(key: string): string {
-    return PluginData.getPluginData(this._raw(), key)
-  }
-
-  setPluginData(key: string, value: string): void {
-    assertNodeEditable(this[INTERNAL_GRAPH], this[INTERNAL_ID])
-    PluginData.setPluginData(this[INTERNAL_GRAPH], this._raw(), key, value)
-  }
-
-  getPluginDataKeys(): string[] {
-    return PluginData.getPluginDataKeys(this._raw())
-  }
-
-  getSharedPluginData(namespace: string, key: string): string {
-    return PluginData.getSharedPluginData(this._raw(), namespace, key)
-  }
-
-  setSharedPluginData(namespace: string, key: string, value: string): void {
-    assertNodeEditable(this[INTERNAL_GRAPH], this[INTERNAL_ID])
-    PluginData.setSharedPluginData(this[INTERNAL_GRAPH], this._raw(), namespace, key, value)
-  }
-
-  getSharedPluginDataKeys(namespace: string): string[] {
-    return PluginData.getSharedPluginDataKeys(this._raw(), namespace)
-  }
-
-  getFillOkHCL(index = 0): OkHCLPayload | null {
-    return getFillOkHCL(this._raw(), index)
-  }
-
-  setFillOkHCL(color: OkHCLColor, index = 0): void {
-    this._update(
-      setNodeFillOkHCL(this._raw(), index, color, this[INTERNAL_GRAPH].documentColorSpace)
-    )
-  }
-
-  getStrokeOkHCL(index = 0): OkHCLPayload | null {
-    return getStrokeOkHCL(this._raw(), index)
-  }
-
-  setStrokeOkHCL(color: OkHCLColor, index = 0): void {
-    this._update(
-      setNodeStrokeOkHCL(this._raw(), index, color, this[INTERNAL_GRAPH].documentColorSpace)
     )
   }
 
@@ -579,11 +543,14 @@ const proxyInternals = {
 
 installStrokeNodeProxyAccessors(FigmaNodeProxy.prototype, proxyInternals)
 installStickyNodeProxyAccessors(FigmaNodeProxy.prototype, proxyInternals)
+installConnectorNodeProxyAccessors(FigmaNodeProxy.prototype, proxyInternals)
 installTextNodeProxyAccessors(FigmaNodeProxy.prototype, proxyInternals, MIXED)
 installTextRangeMethods(FigmaNodeProxy.prototype, proxyInternals, MIXED)
 installLayoutNodeProxyAccessors(FigmaNodeProxy.prototype, proxyInternals)
 installVariableModeNodeProxyAccessors(FigmaNodeProxy.prototype, proxyInternals)
+installPluginDataMethods(FigmaNodeProxy.prototype, proxyInternals)
 installComponentPropertyAccessors(FigmaNodeProxy.prototype, proxyInternals)
 installInstanceOverrideAccessors(FigmaNodeProxy.prototype, proxyInternals)
 installSlotAccessors(FigmaNodeProxy.prototype, proxyInternals)
 installDevStatusAccessors(FigmaNodeProxy.prototype, proxyInternals)
+installShapeWithTextAccessors(FigmaNodeProxy.prototype, proxyInternals)

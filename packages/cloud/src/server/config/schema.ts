@@ -1,4 +1,8 @@
-import { CLOUD_PROTOCOL_MAX_UPLOAD_BYTES, cloudEditorVersionSchema } from '#cloud/contract'
+import {
+  CLOUD_PROTOCOL_MAX_UPLOAD_BYTES,
+  cloudEditorVersionSchema,
+  RELAY_MINIMUM_MESSAGE_BYTES
+} from '#cloud/contract'
 import { staticEntitlementsSchema } from '#cloud/server/policy/static'
 import * as v from 'valibot'
 
@@ -40,7 +44,7 @@ const rawCloudServerConfigSchema = v.object({
         CLOUD_PROTOCOL_MAX_UPLOAD_BYTES
       ),
       maximumCollaborationMessageBytes: v.optional(
-        v.pipe(v.number(), v.integer(), v.minValue(1024)),
+        v.pipe(v.number(), v.integer(), v.minValue(RELAY_MINIMUM_MESSAGE_BYTES)),
         CLOUD_DEFAULT_MAX_COLLABORATION_MESSAGE_BYTES
       ),
       maximumConnectionsPerRoom: v.optional(
@@ -133,7 +137,18 @@ const rawCloudServerConfigSchema = v.object({
   documentRetentionMs: v.optional(
     v.pipe(v.number(), v.integer(), v.minValue(0)),
     30 * 24 * 60 * 60_000
-  )
+  ),
+  /** The AI service editors reach with tokens this server signs; see `src/contract/ai.ts`. */
+  aiEndpoint: v.optional(httpURLSchema),
+  /** The PKCS #8 PEM of the P-256 key that signs AI service tokens. */
+  aiSigningKey: optionalTextSchema,
+  aiTokenLifetimeSeconds: v.optional(
+    v.pipe(v.number(), v.integer(), v.minValue(60), v.maxValue(60 * 60)),
+    10 * 60
+  ),
+  billingPortalURL: v.optional(httpURLSchema),
+  /** The bearer token services such as billing present to the internal API. */
+  internalServiceToken: v.optional(v.pipe(v.string(), v.minLength(32)))
 })
 
 export type CloudServerConfig = v.InferOutput<typeof rawCloudServerConfigSchema>
@@ -217,6 +232,22 @@ function validateEmailConfig(config: CloudServerConfig): void {
   }
 }
 
+function validateServiceConfig(config: CloudServerConfig): void {
+  requireTogether(config, 'AI service', ['aiEndpoint', 'aiSigningKey'])
+  if (config.internalServiceToken && config.staticEntitlements) {
+    throw new CloudConfigError(
+      'The internal API writes database entitlements, which static entitlements would hide'
+    )
+  }
+  if (
+    config.deployment === 'official' &&
+    config.aiEndpoint &&
+    new URL(config.aiEndpoint).protocol !== 'https:'
+  ) {
+    throw new CloudConfigError('Official AI service endpoint must use HTTPS')
+  }
+}
+
 function validateObjectStorageConfig(config: CloudServerConfig): void {
   if (config.s3KmsKeyId && config.s3ServerSideEncryption !== 'aws:kms') {
     throw new CloudConfigError('S3 KMS key ID requires aws:kms server-side encryption')
@@ -246,6 +277,7 @@ export function parseCloudServerConfig(input: unknown): CloudServerConfig {
   }
   validateAuthenticationConfig(config)
   validateEmailConfig(config)
+  validateServiceConfig(config)
   validateObjectStorageConfig(config)
   return config
 }

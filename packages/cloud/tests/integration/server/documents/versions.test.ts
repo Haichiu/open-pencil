@@ -61,13 +61,18 @@ async function testApp(options: { fullHistory?: boolean } = {}) {
           )
         )
       : undefined
+  const restoredDocuments: string[] = []
+  /** Each time the server told the document's rooms its history changed. */
+  const announcements: string[] = []
   const app = createCloudApp({
     config,
     database: runtime.database,
     auth: createBetterAuthAdapter(config, runtime.database),
     objects: objects.store,
     policy,
-    resolveSession: async () => alice
+    resolveSession: async () => alice,
+    onDocumentRestored: (documentId) => restoredDocuments.push(documentId),
+    onDocumentVersionsChanged: (documentId) => announcements.push(documentId)
   })
   const request = (path: string, init: { method?: string; json?: unknown } = {}) =>
     app.request(`/api${path}`, {
@@ -146,6 +151,8 @@ async function testApp(options: { fullHistory?: boolean } = {}) {
 
   return {
     runtime,
+    restoredDocuments,
+    announcements,
     objects,
     policy,
     request,
@@ -168,10 +175,13 @@ describe('Cloud version history', () => {
       expect((await context.history()).versions.map((version) => version.revisionId)).toEqual([
         first
       ])
+      // Only saves that add a checkpoint change the history open lists show.
+      expect(context.announcements).toEqual([context.documentId])
 
       // Half an hour on, the next save keeps the state it replaces.
       await context.age(31 * 60_000)
       const latest = await context.save()
+      expect(context.announcements).toHaveLength(2)
       const { versions } = await context.history()
       expect(versions.map((version) => version.revisionId)).toEqual([ended, first])
       expect(versions.every((version) => version.kind === 'checkpoint')).toBe(true)
@@ -212,6 +222,8 @@ describe('Cloud version history', () => {
       )
       expect(cleared.version).toMatchObject({ kind: 'checkpoint', name: null, description: null })
       expect((await context.history()).versions).toHaveLength(2)
+      // The first save's checkpoint, the name, and taking it away.
+      expect(context.announcements).toHaveLength(3)
 
       const empty = await context.request(`/documents/${context.documentId}/versions`, {
         method: 'POST',
@@ -260,17 +272,23 @@ describe('Cloud version history', () => {
         .where('id', '=', context.documentId)
         .executeTakeFirstOrThrow()
       expect(after.collaborationEpoch).toBe(before.collaborationEpoch + 1)
+      expect(context.restoredDocuments).toEqual([context.documentId])
 
       // The restored state is the same stored file, so it opens as the original and costs nothing.
       const [restoredDownload, originalDownload] = await Promise.all(
         [restored.version.id, original.id].map(async (versionId) =>
           responseJSON(
             await context.request(`/documents/${context.documentId}/versions/${versionId}`),
-            v.object({ document: v.object({ download: v.object({ url: v.string() }) }) })
+            v.object({
+              document: v.object({ download: v.object({ url: v.string() }) }),
+              version: v.object({ id: v.string() })
+            })
           )
         )
       )
       expect(restoredDownload?.document.download.url).toBe(originalDownload?.document.download.url)
+      // Each comes with its version, so a link to one can show it without the history.
+      expect(originalDownload?.version.id).toBe(original.id)
       const usage = await context.runtime.database
         .selectFrom('workspaceStorageUsage')
         .select('committedBytes')

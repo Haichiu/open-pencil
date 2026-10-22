@@ -4,6 +4,7 @@ import type { ExportFormatId } from './export-format'
 import type { CanvasGuide } from './guides'
 import type { InstanceOverrideState } from './instance-overrides'
 import type { Color, Matrix, Rect, Vector } from './primitives'
+import type { ShapeWithTextType } from './shape-with-text/kinds'
 
 export interface SceneGraphEvents {
   'node:created': (node: SceneNode) => void
@@ -174,7 +175,10 @@ export interface Fill {
   gradientTransform?: GradientTransform
   imageHash?: string
   imageScaleMode?: ImageScaleMode
+  /** A crop's image-space window; Fill, Fit and Tile ignore it. */
   imageTransform?: GradientTransform
+  /** Clockwise turn of a Fill, Fit or Tile image, in multiples of 90°; a crop holds its own. */
+  imageRotation?: number
   sourceNodeId?: string
   scale?: number
   spacing?: number
@@ -420,8 +424,11 @@ export interface PluginRelaunchDataEntry {
 export interface TextPathData {
   network: VectorNetwork
   normalizedSize: Vector
+  /** Where on the start segment the text starts, from 0 at its start to 1 at its end. */
   tValue: number
   forward: boolean
+  /** The segment the text starts on, which Figma marks in the network blob; 0 when unmarked. */
+  startSegment?: number
 }
 
 export interface DerivedTextGlyph {
@@ -446,6 +453,13 @@ export interface DerivedTextGlyph {
    */
   scaleX?: number
   scaleY?: number
+  /**
+   * The code points of the emoji this glyph stands for, sequence and all. Its outline is only a
+   * placeholder square a 1 em wide; the emoji's image is drawn there instead, as Figma does.
+   */
+  emojiCodePoints?: number[]
+  /** The image set Figma draws the emoji from, when the file names one other than Apple's. */
+  emojiImageSet?: 'NOTO'
 }
 
 export interface SymbolLink {
@@ -723,6 +737,15 @@ export interface SceneNode {
 
   pointCount: number
   starInnerRadius: number
+  /** The FigJam kind a SHAPE_WITH_TEXT draws; its label is the node's own text. */
+  shapeWithTextType: ShapeWithTextType
+  /** The height a shape with text was given; it grows past it to fit its label. 0 is unset. */
+  shapeUserHeight: number
+  /**
+   * Whether a shape with text keeps its height and cuts its label off with "…" instead of growing,
+   * as FigJam does once the shape's height was set.
+   */
+  shapeTruncates: boolean
 
   componentId: string | null
   instanceOverrides: InstanceOverrideState
@@ -816,7 +839,69 @@ export interface ComponentPropertyDefinition {
 }
 
 export type VariableType = 'COLOR' | 'FLOAT' | 'STRING' | 'BOOLEAN'
-export type VariableValue = Color | number | string | boolean | { aliasId: string }
+export interface VariableAlias {
+  aliasId: string
+}
+
+/** Figma's two-argument color expression; opacity is a percentage, not an alpha multiplier. */
+export interface VariableColorExpression {
+  expression: 'COMPOSE_COLOR'
+  color: Color | VariableAlias
+  opacity: number | VariableAlias
+}
+
+export type VariableLiteral = Color | number | string | boolean
+/** The arithmetic, comparison, logic and conversions a formula combines values with. */
+export const VARIABLE_FORMULA_OPERATORS = [
+  'add',
+  'subtract',
+  'multiply',
+  'divide',
+  'negate',
+  'equal',
+  'notEqual',
+  'less',
+  'lessOrEqual',
+  'greater',
+  'greaterOrEqual',
+  'and',
+  'or',
+  'not',
+  'text',
+  'truthy',
+  'if'
+] as const
+export type VariableFormulaOperator = (typeof VARIABLE_FORMULA_OPERATORS)[number]
+export interface VariableFormulaOperation {
+  operator: VariableFormulaOperator
+  operands: VariableFormulaNode[]
+}
+export type VariableFormulaNode = VariableLiteral | VariableAlias | VariableFormulaOperation
+export interface VariableFormula {
+  expression: 'FORMULA'
+  type: VariableType
+  value: VariableFormulaNode
+}
+/**
+ * An imported expression OpenPencil cannot evaluate, kept as the file wrote it so saving writes it
+ * back. `references` holds one entry per alias in `value`, in the order the format walks them, and
+ * `null` where the alias names a variable this document does not have. `modes` holds the mode id of
+ * each mode key in `value`, in the same walk order.
+ */
+export interface VariableUnsupportedExpression {
+  expression: 'UNSUPPORTED'
+  /** The function name the file gives, such as `VAR_MODE_LOOKUP`. */
+  function: string
+  value: Record<string, unknown>
+  references: (string | null)[]
+  modes: string[]
+}
+export type VariableValue =
+  | VariableLiteral
+  | VariableAlias
+  | VariableColorExpression
+  | VariableFormula
+  | VariableUnsupportedExpression
 export type VariableModeMap = Record<string, string>
 
 /** Property pickers a variable is offered in, as Figma names them. */
@@ -857,10 +942,14 @@ export type CodeSyntaxPlatform = (typeof CODE_SYNTAX_PLATFORMS)[number]
 export const TOKEN_UNITS = ['none', 'px', 'rem', '%', 'ms', 's', 'deg'] as const
 export type TokenUnit = (typeof TOKEN_UNITS)[number]
 
-/** A mode value authored as raw CSS. `resolved` is the number the canvas drew for it. */
+/**
+ * CSS written in place of a number mode's value, such as `clamp(1rem, 4vw, 1.5rem)`. While the
+ * mode holds a plain number, `resolved` records it, so a number later edited elsewhere, Figma
+ * included, shows the CSS no longer describes it.
+ */
 export interface TokenExpression {
   css: string
-  resolved: number
+  resolved?: number
 }
 
 export interface Variable {

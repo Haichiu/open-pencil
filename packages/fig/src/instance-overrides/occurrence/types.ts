@@ -79,4 +79,6 @@ export interface InterpretInstanceOptions {
   onMissingComponent?: (diagnostic: MissingComponentDiagnostic) => void
   /** Keep the component's own slot content where the assigned content frame is gone. */
   onMissingSlotContent?: (diagnostic: MissingSlotContentDiagnostic) => void
+  /** Called as each layer expands, so a caller can tell a long read from a stuck one. */
+  onProgress?: () => void
 }

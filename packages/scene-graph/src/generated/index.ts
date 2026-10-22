@@ -1,7 +1,8 @@
+import { CONNECTOR_KIND } from '../connectors/sublayers'
 import type { SceneGraph } from '../index'
 import type { NodeType, SceneNode } from '../types'
-import { CONNECTOR_KIND } from './connector'
 import type { GeneratedFrameKind } from './kind'
+import { SHAPE_WITH_TEXT_KIND } from './shape-with-text'
 import { STICKY_KIND } from './sticky'
 
 /**
@@ -13,21 +14,27 @@ import { STICKY_KIND } from './sticky'
  * Each type is described once, here; the editor and file formats ask it instead of testing for
  * the type.
  */
-const GENERATED_FRAME_KINDS: Partial<Record<NodeType, GeneratedFrameKind>> = {
+const GENERATED_FRAME_KINDS = {
+  SHAPE_WITH_TEXT: SHAPE_WITH_TEXT_KIND,
   STICKY: STICKY_KIND,
   CONNECTOR: CONNECTOR_KIND
-}
+} satisfies Partial<Record<NodeType, GeneratedFrameKind>>
+
+/** The layer types that are generated frames, for tables that must cover each of them. */
+export type GeneratedFrameType = keyof typeof GENERATED_FRAME_KINDS
 
 export const GENERATED_FRAME_TYPES: ReadonlySet<NodeType> = new Set(
-  Object.keys(GENERATED_FRAME_KINDS) as NodeType[]
+  Object.keys(GENERATED_FRAME_KINDS) as GeneratedFrameType[]
 )
 
 /** What a generated frame's type says about it, or undefined for any other layer. */
 export function generatedFrameKind(node: Pick<SceneNode, 'type'>): GeneratedFrameKind | undefined {
-  return GENERATED_FRAME_KINDS[node.type]
+  return isGeneratedFrame(node) ? GENERATED_FRAME_KINDS[node.type] : undefined
 }
 
-export function isGeneratedFrame(node: Pick<SceneNode, 'type'>): boolean {
+export function isGeneratedFrame<N extends Pick<SceneNode, 'type'>>(
+  node: N
+): node is N & { type: GeneratedFrameType } {
   return GENERATED_FRAME_TYPES.has(node.type)
 }
 
@@ -36,9 +43,22 @@ export function generatedFrameOwner(graph: SceneGraph, node: SceneNode): SceneNo
   return node.parentId ? graph.closest(node.parentId, isGeneratedFrame) : undefined
 }
 
-/** The text a generated frame edits in place, such as a sticky note's body. */
+/** The text a generated frame edits in place: a sticky note's body or a connector's label. */
 export function generatedFrameText(graph: SceneGraph, node: SceneNode): SceneNode | undefined {
   return generatedFrameKind(node)?.text(graph, node)
+}
+
+/**
+ * `changes` with what a width or height in them also sets on a generated frame
+ * (`GeneratedFrameKind.sized`); fields `changes` sets itself, such as an undo restoring them, win.
+ */
+export function withGeneratedFrameSize(
+  node: SceneNode,
+  changes: Partial<SceneNode>
+): Partial<SceneNode> {
+  const kind = generatedFrameKind(node)
+  if (!kind?.sized || (changes.width === undefined && changes.height === undefined)) return changes
+  return { ...kind.sized(changes, node), ...changes }
 }
 
 /** Whether a layer turns: any layer but a generated frame that stays upright. */
@@ -51,6 +71,11 @@ export function layerResizes(node: Pick<SceneNode, 'type'>): boolean {
   return generatedFrameKind(node)?.resizes ?? true
 }
 
+/** Whether a layer takes strokes and effects: any layer but a sticky note. */
+export function layerStrokesAndEffects(node: Pick<SceneNode, 'type'>): boolean {
+  return generatedFrameKind(node)?.strokesAndEffects ?? true
+}
+
 export type { GeneratedFrameKind } from './kind'
-export * from './connector'
+export * from './shape-with-text'
 export * from './sticky'

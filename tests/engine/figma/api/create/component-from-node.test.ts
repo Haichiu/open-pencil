@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { computeAllLayouts } from '@open-pencil/core'
+import { OpenPencilAPI, computeAllLayouts } from '@open-pencil/core'
 
 import { createAPI } from '../helpers'
 
@@ -27,14 +27,15 @@ describe('createComponentFromNode', () => {
 
   test('preserves root variable bindings and explicit modes', () => {
     const api = createAPI()
-    const collection = api.createVariableCollection('Radii')
-    const variable = api.createVariable('radius/md', 'FLOAT', collection.id, 8)
+    const collection = api.variables.createVariableCollection('Radii')
+    const variable = api.variables.createVariable('radius/md', collection, 'FLOAT')
+    variable.setValueForMode(collection.defaultModeId, 8)
 
     const frame = api.createFrame()
     frame.name = 'Card'
     frame.resize(200, 50)
     frame.cornerRadius = 8
-    api.bindVariable(frame.id, 'cornerRadius', variable.id)
+    new OpenPencilAPI(api).bindVariable(frame, 'cornerRadius', variable)
     api.graph.updateNode(frame.id, {
       variableModes: { [collection.id]: collection.defaultModeId }
     })

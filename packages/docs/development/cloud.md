@@ -46,6 +46,17 @@ revision has its own object key.
   replace it.
 - Deleting a document is immediate for users; the cleanup worker removes revisions and objects once
   the retention period passes.
+- Images are stored once per workspace, keyed by the SHA-256 the object store verifies, and a stored
+  revision leaves them out of its file: it lists the images it uses under the names the file gives
+  them, and a download returns a link for each. Before a save the client asks which of its images
+  the workspace lacks and uploads only those, each as an upload of its own kind with its own
+  reservation, committed together in one request; asking renews the images the workspace holds.
+  An image under a name Cloud does not accept stays inside the file. A save that names an image
+  the workspace does not hold is refused. Keying by the verified checksum, with names kept per
+  revision, means bytes uploaded under the wrong name can only reach the revision that named them.
+- Restoring or duplicating a version gives the new revision the same images. Compaction releases an
+  image no kept revision uses once a day has passed since a save last asked for it: its bytes return
+  to the workspace's usage and the object sweep deletes its file.
 
 ### Version history
 
@@ -61,6 +72,24 @@ keeps on its own, and versions someone named (`document_version`, one per revisi
   version's stored file, and advances the collaboration epoch, so the live room starts over on it.
   Duplicating makes a new document in the same workspace from the same file. Neither uploads
   anything or uses more storage.
+- A restore ends the document's rooms on the relay with close code `4410`, and the relay turns away
+  tickets for an earlier epoch. A tab told so, or handed a ticket for another room, drops its queued
+  uploads, shows the restored file it downloads, and joins the new room; a saver never overwrites a
+  revision once its room has moved on.
+- In the editor, File → Show version history makes the document read-only and lists its versions in
+  the right sidebar, as Figma does. Choosing a version shows it in a read-only editor of its own in
+  place of the document, whose room keeps syncing underneath; Save to version history (⌥⌘S) names
+  the document once it is uploaded. A tab that does not save asks the room's saver on the `upload`
+  channel, after its own edits, and names it when the saver answers that its upload finished. When
+  a version is named, renamed, or turned back into an autosave, or a save adds a checkpoint, the
+  server sends `versions` to the document's rooms and every open history loads it again; peers
+  cannot send it.
+- A document's address is `/cloud/documents/:id?server=…`, with `&version=…` for a version; the
+  editor keeps the address bar on the active tab's document and the version it shows, and a
+  version's Copy link builds the address on the server's advertised editor URL. The address carries
+  no secret: opening it signs in to the named server, one the app already knows or the official one,
+  and the server's access rules decide. Fetching a version returns the version with its download, so
+  a link can show it without paging the history.
 - The cleanup worker compacts saves that are neither current nor a version once they are a day old,
   a batch at a time, and returns the bytes of files nothing else uses to the workspace's usage. A
   freed file's row stays until the object store deletes it, so a failed delete is retried. With
@@ -120,6 +149,15 @@ PostgreSQL by document and collaboration epoch, so a newcomer gets the document 
 else is online. Tickets are short-lived signed JWTs; the client presents a fresh one before the
 current one expires, and the relay closes a socket whose ticket lapsed or changed identity.
 
+A socket message carries at most 256 KiB of a frame, under the deployment's per-message limit,
+which may not be lower. A larger frame, such as a big paste, the first editor's copy of a large
+document, or a newcomer's sync reply, travels as fragments in a row that the receiver joins again.
+The relay joins an editor's fragments up to 256 MiB and holds viewers and peers not yet admitted to
+one message, so only an editor can make it buffer more. A peer the relay turns away for good, for
+a ticket, a full room, or a frame past those limits, leaves the room: the document's status says it
+is not editing live and offers to rejoin, a viewer stays read-only, and an editor saves on its own,
+since a tab that was not the room's saver had its edits counted as saved by the room.
+
 The relay enforces what the ticket allows: a viewer's document updates and sync replies never leave
 it, and presence updates are rewritten so others see the ticket's name and a `cloud` field with the
 verified identity and permission. A peer cannot claim presence clients another peer owns. Voice is
@@ -169,6 +207,13 @@ layers new IDs. One signed-in editor, the one with the lowest presence client, s
 the others drop their queued uploads and count their edits as saved. Guests who open a link join
 the room with the link's permission and never save.
 
+The room says what is unsaved, not the tab. Each peer counts its own edits to the room's document
+under its Yjs client in the `edits` map, and the saver copies the counts its upload held into
+`saved` once the server has that upload. What a tab takes from the room, including the replay when
+it opens the stored file, is no edit of its own. The saver saves whenever any client has more edits
+than `saved` records, so a tab that becomes the saver also saves edits an earlier saver left, and
+opening a document nobody edited uploads nothing.
+
 ## Configuration
 
 Operators author one schema-versioned TOML file. It owns URLs, trusted origins and proxies,
@@ -192,6 +237,24 @@ reports.
 Storage quota uses reservations: the upload locks the workspace's quota row, counts committed usage
 plus active reservations, reserves the requested bytes, and commits the verified size when the
 upload finishes. Cleanup releases reservations from abandoned uploads.
+
+## AI service and billing
+
+Cloud does not proxy models or keep credit balances. An `[ai]` table advertises a separate AI
+service in discovery, and `POST /api/ai/token` signs a short-lived ES256 token for a workspace
+member when the workspace has the `ai.enabled` entitlement. The token names the user, the
+workspace, and its `ai.monthly_credit_allowance`; the service verifies it against the keys at
+`/.well-known/jwks.json`, so it never reads Cloud's database. The contract editors and services
+share, including the service's catalog, wallet, and error codes, is `src/contract/ai.ts`; it has its
+own version so a service can change without a Cloud release. A `[billing]` table only advertises
+where people manage their plan.
+
+Services that decide entitlements, such as billing, write them through the internal API rather than
+the database: `setWorkspaceEntitlements` in `src/server/internal`, which runtimes expose over HTTP
+with a bearer token (`[internal_api]`) or a private transport of their own. Every write carries an
+increasing `externalVersion`, and a write older than the stored one is refused, because billing
+events arrive out of order. Cloud keeps answering from the last entitlements it received while the
+writer is down.
 
 ## Rate limiting
 
@@ -242,6 +305,12 @@ needs a headless `.fig` writer on the server, which is a later step.
 **2026-10 · A tab takes the room's copy when the room has one.** Reading a `.fig` gives layers new
 IDs, so two tabs that read the same file cannot merge their Yjs states. The first editor seeds an
 empty room only after the relay answers, and later tabs adopt the room root.
+
+**2026-10 · The room records what its revisions hold.** A tab compared with its own copy saw the
+room's values as edits wherever a `.fig` round trip changes them, such as defaults it writes, so
+every open uploaded a revision. Matching the round trip field by field breaks again with each new
+field. Per-client edit counts in the room are what Yjs already merges, so no server change is
+needed.
 
 **2026-10 · Redirect sign-in only on the server's own editor address.** There the session cookie is
 first-party and the server can send the person back to the same tab. The desktop app and editors on
@@ -316,3 +385,10 @@ and named versions, and saves between them are compacted after a day. Checkpoint
 save lands rather than on a timer, so they need no client clock and cover every writer. History stores
 `.fig` revisions rather than Yjs snapshots: snapshots would need garbage collection off in every room
 and a version would still have to become a file to open, restore, or duplicate.
+
+**2026-10 · AI services verify Cloud-signed tokens instead of calling Cloud.** A service checks a
+token against a published key on every model request, with no round-trip to Cloud or its database,
+and the same check serves the official service and self-hosted ones. Entitlements are read when a
+token is signed, so a plan change reaches the service within one token lifetime; asking Cloud on
+every request would have made model calls depend on Cloud's database. Entitlements are pushed to
+Cloud rather than read from billing, so documents keep opening when billing is down.

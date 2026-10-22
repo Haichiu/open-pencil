@@ -1,9 +1,11 @@
 import { describe, expect, jest, test } from 'bun:test'
 
 import {
+  createRelayClientAssembler,
   decodeRelayClientFrame,
-  encodeRelayServerFrame,
   RELAY_CLOSE,
+  RELAY_FRAGMENT_BYTES,
+  relayServerMessages,
   type RelayClientFrame,
   type RelayServerFrame
 } from '@open-pencil/cloud/contract'
@@ -17,9 +19,14 @@ class FakeSocket extends EventTarget {
   readyState: number = WebSocket.CONNECTING
   binaryType = 'blob'
   readonly sent: RelayClientFrame[] = []
+  /** Socket messages sent, which outnumber frames once a frame travels in fragments. */
+  messages = 0
+  private readonly assembler = createRelayClientAssembler(() => Infinity)
 
   send(data: Uint8Array) {
-    const frame = decodeRelayClientFrame(data)
+    this.messages++
+    const assembled = this.assembler.push(data)
+    const frame = assembled.type === 'frame' ? decodeRelayClientFrame(assembled.data) : null
     if (frame) this.sent.push(frame)
   }
 
@@ -29,7 +36,13 @@ class FakeSocket extends EventTarget {
   }
 
   receive(frame: RelayServerFrame) {
-    const data = encodeRelayServerFrame(frame)
+    for (const data of relayServerMessages(frame)) {
+      this.dispatchEvent(new MessageEvent('message', { data: data.slice().buffer }))
+    }
+  }
+
+  /** Delivers bytes as one socket message, whatever they hold. */
+  receiveMessage(data: Uint8Array) {
     this.dispatchEvent(new MessageEvent('message', { data: data.slice().buffer }))
   }
 
@@ -43,15 +56,23 @@ async function settle() {
   for (let index = 0; index < 5; index++) await Promise.resolve()
 }
 
-function room(options: { failTicket?: (attempt: number) => boolean } = {}) {
+function room(
+  options: {
+    failTicket?: (attempt: number) => boolean
+    /** The document moved to another room by this ticket request. */
+    movedAt?: number
+  } = {}
+) {
   const sockets: FakeSocket[] = []
   let tickets = 0
+  let restored = 0
   const errors: unknown[] = []
   const join = createCloudRelayJoin({
     url: 'wss://cloud.example.com/api/collaboration/relay',
     ticket: async () => {
       tickets += 1
       if (options.failTicket?.(tickets)) throw new Error('Ticket endpoint unavailable')
+      if (options.movedAt !== undefined && tickets >= options.movedAt) return null
       return { token: `ticket-${tickets}`, expiresAt: new Date(Date.now() + 300_000).toISOString() }
     },
     createSocket: () => {
@@ -60,14 +81,25 @@ function room(options: { failTicket?: (attempt: number) => boolean } = {}) {
       return asDouble<WebSocket>(socket)
     },
     reconnectDelayMs: () => 0,
-    onError: (_message, error) => errors.push(error)
+    onError: (_message, error) => errors.push(error),
+    onRestored: () => {
+      restored += 1
+    }
   })
   const transport = join('cloud:room:0')
   const joined: string[] = []
   const left: string[] = []
   transport.onPeerJoin((peerId) => joined.push(peerId))
   transport.onPeerLeave((peerId) => left.push(peerId))
-  return { transport, sockets, joined, left, errors, tickets: () => tickets }
+  return {
+    transport,
+    sockets,
+    joined,
+    left,
+    errors,
+    tickets: () => tickets,
+    restored: () => restored
+  }
 }
 
 describe('Cloud relay transport', () => {
@@ -119,6 +151,48 @@ describe('Cloud relay transport', () => {
     await transport.leave()
   })
 
+  test('sends and receives frames larger than one message in fragments', async () => {
+    const { transport, sockets } = room()
+    const [send, receive] = transport.makeAction('yjs-update')
+    const received: Uint8Array[] = []
+    receive((data) => received.push(data))
+    await settle()
+    const socket = sockets[0]
+    if (!socket) throw new Error('Expected a socket')
+    socket.open()
+    socket.receive({ type: 'welcome', peerId: 'me', peers: ['server'] })
+    const payload = crypto.getRandomValues(new Uint8Array(RELAY_FRAGMENT_BYTES * 3))
+    const before = socket.messages
+    send(payload)
+    expect(socket.messages - before).toBeGreaterThan(1)
+    expect(socket.sent.at(-1)).toEqual({
+      type: 'message',
+      namespace: 'yjs-update',
+      target: null,
+      payload
+    })
+    socket.receive({ type: 'message', namespace: 'yjs-update', from: 'alice', payload })
+    expect(received).toEqual([payload])
+  })
+
+  test('connects again after a frame it cannot read, to sync what it missed', async () => {
+    const { sockets, errors } = room()
+    await settle()
+    const socket = sockets[0]
+    if (!socket) throw new Error('Expected a socket')
+    socket.open()
+    socket.receive({ type: 'welcome', peerId: 'me', peers: ['server'] })
+    // A fragment that says more follows, then a whole frame in the middle of it.
+    socket.receiveMessage(new Uint8Array([4, 1, 1, 0]))
+    socket.receive({ type: 'join', peerId: 'alice' })
+    expect(errors).toHaveLength(1)
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    await settle()
+    expect(sockets).toHaveLength(2)
+  })
+
   test('reconnects with a fresh ticket after losing the relay, saying its peers left', async () => {
     const { transport, sockets, left, tickets } = room()
     await settle()
@@ -151,6 +225,63 @@ describe('Cloud relay transport', () => {
       await settle()
       expect(sockets).toHaveLength(1)
       expect(errors).toEqual(['refused'])
+    }
+  })
+
+  test('moves on, without reconnecting, once the relay says the document was restored', async () => {
+    const { sockets, restored, errors } = room()
+    await settle()
+    sockets[0]?.open()
+    sockets[0]?.close(RELAY_CLOSE.restored, 'The document was restored')
+    await settle()
+    expect(restored()).toBe(1)
+    expect(sockets).toHaveLength(1)
+    expect(errors).toEqual([])
+  })
+
+  test('moves on when a fresh ticket is for the document’s new room', async () => {
+    const { sockets, restored } = room({ movedAt: 2 })
+    await settle()
+    sockets[0]?.open()
+    sockets[0]?.close(1006, 'Connection lost')
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    await settle()
+    expect(restored()).toBe(1)
+    expect(sockets).toHaveLength(1)
+  })
+
+  test('moves on once when the relay and a refreshed ticket both say so', async () => {
+    jest.useFakeTimers()
+    try {
+      const { sockets, restored } = room({ movedAt: 2 })
+      await settle()
+      sockets[0]?.open()
+      // The refresh is waiting on its ticket as the relay closes the room.
+      jest.advanceTimersByTime(240_000)
+      sockets[0]?.close(RELAY_CLOSE.restored, 'The document was restored')
+      await settle()
+      expect(restored()).toBe(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('closes its socket when a refreshed ticket is for the document’s new room', async () => {
+    jest.useFakeTimers()
+    try {
+      const { sockets, left, restored } = room({ movedAt: 2 })
+      await settle()
+      sockets[0]?.open()
+      sockets[0]?.receive({ type: 'welcome', peerId: 'me', peers: ['server', 'alice'] })
+      jest.advanceTimersByTime(240_000)
+      await settle()
+      expect(restored()).toBe(1)
+      expect(sockets[0]?.readyState).toBe(WebSocket.CLOSED)
+      expect(left).toEqual(['server', 'alice'])
+    } finally {
+      jest.useRealTimers()
     }
   })
 

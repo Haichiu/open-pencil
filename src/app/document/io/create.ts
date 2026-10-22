@@ -76,11 +76,7 @@ export function createDocumentIOActions(
     getDocumentFilePath: sourceState.getFilePath,
     getSourceIdentity: sourceState.getSourceIdentity,
     getStorageBinding: sourceState.getStorageBinding,
-    /** Whether saving writes in place rather than asking for a location. */
-    hasWritableSource: () =>
-      !!sourceState.getFilePath() ||
-      !!sourceState.getFileHandle() ||
-      !!sourceState.getStorageBinding(),
+    hasWritableSource: sourceState.hasWritableSource,
     getRecoveryId: sourceActions.getRecoveryId,
     adoptRecoverySnapshot: sourceActions.adoptRecoverySnapshot,
     persistRecoveryNow: sourceActions.persistRecoveryNow,
@@ -89,6 +85,7 @@ export function createDocumentIOActions(
     setStorageDocumentSource: sourceActions.setStorageDocumentSource,
     setPlannedFilePath: sourceActions.setPlannedFilePath,
     saveFigFileToPath: sourceActions.saveFigFileToPath,
+    saveFigFileCopy: sourceActions.saveFigFileCopy,
     saveFigFileToStorage: sourceActions.saveFigFileToStorage,
     startWatchingCurrentFile: sourceActions.startWatchingCurrentFile,
     disposeDocumentIO: sourceActions.disposeDocumentIO,
@@ -97,6 +94,8 @@ export function createDocumentIOActions(
     importDOMText,
     hasUnsavedChanges: sourceActions.hasUnsavedChanges,
     markDocumentSaved: () => sourceActions.markDocumentSaved(),
+    markDocumentChanged: sourceActions.markDocumentChanged,
+    adoptChanges: sourceActions.adoptChanges,
     saveFigFile: sourceActions.saveFigFile,
     saveFigFileAs: sourceActions.saveFigFileAs
   }

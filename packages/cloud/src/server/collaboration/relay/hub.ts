@@ -1,12 +1,13 @@
 import {
   COLLAB_ACTIONS,
+  createRelayClientAssembler,
   encodeSyncReply,
   decodeRelayClientFrame,
   decodeRoomUpdate,
-  encodeRelayServerFrame,
   MAX_COLLAB_MESSAGE_BYTES,
   RELAY_CLOSE,
   RELAY_SERVER_PEER,
+  relayServerMessages,
   type RelayServerFrame
 } from '#cloud/contract'
 import * as Y from 'yjs'
@@ -30,10 +31,19 @@ export type RelayConnection = {
 export type CollaborationRelayOptions = {
   authSecret: string
   store: CollaborationStateStore
+  /**
+   * The most one socket message may carry. An editor's larger frames arrive as fragments joined
+   * up to `MAX_COLLAB_MESSAGE_BYTES`; anyone else's frame must fit in one message.
+   */
   maximumMessageBytes: number
   maximumConnectionsPerRoom: number
   /** The participant limit policy sets for a document, or null for none. */
   maximumParticipants?: (documentId: string) => Promise<number | null>
+  /**
+   * The document's current collaboration epoch, which a restore advances; a ticket for an earlier
+   * room is turned away so nobody rejoins the document as it was.
+   */
+  currentRoomEpoch?: (documentId: string) => Promise<number | null>
   /** How long after a change the room's document is saved. */
   persistDelayMs?: number
   /** How long a room whose last save failed waits before saving again. */
@@ -82,7 +92,12 @@ export function createCollaborationRelay(options: CollaborationRelayOptions) {
   const report = options.onError ?? ((message, error) => console.error(`[Cloud] ${message}`, error))
 
   function send(socket: RelaySocket, frame: RelayServerFrame) {
-    socket.send(encodeRelayServerFrame(frame))
+    for (const message of relayServerMessages(frame)) socket.send(message)
+  }
+
+  function sendAll(sockets: Iterable<RelaySocket>, frame: RelayServerFrame) {
+    const messages = relayServerMessages(frame)
+    for (const socket of sockets) for (const message of messages) socket.send(message)
   }
 
   async function openRoom(authorization: RelayAuthorization): Promise<Room> {
@@ -165,12 +180,14 @@ export function createCollaborationRelay(options: CollaborationRelayOptions) {
     target: string | null,
     payload: Uint8Array
   ) {
-    const frame = encodeRelayServerFrame({ type: 'message', namespace, from: from.id, payload })
-    if (target) {
-      room.peers.get(target)?.socket.send(frame)
-      return
-    }
-    for (const peer of room.peers.values()) if (peer !== from) peer.socket.send(frame)
+    const frame: RelayServerFrame = { type: 'message', namespace, from: from.id, payload }
+    const recipients = target
+      ? [room.peers.get(target)]
+      : [...room.peers.values()].filter((peer) => peer !== from)
+    sendAll(
+      recipients.flatMap((peer) => (peer ? [peer.socket] : [])),
+      frame
+    )
   }
 
   function handleServerMessage(room: Room, peer: Peer, namespace: string, payload: Uint8Array) {
@@ -202,6 +219,8 @@ export function createCollaborationRelay(options: CollaborationRelayOptions) {
   ) {
     const readOnly = peer.authorization.permission === 'view'
     if (readOnly && !VIEWER_ACTIONS.has(namespace)) return
+    // Only the server says the history changed.
+    if (namespace === COLLAB_ACTIONS.versions) return
 
     let forwarded = payload
     if (namespace === COLLAB_ACTIONS.awareness) {
@@ -241,9 +260,19 @@ export function createCollaborationRelay(options: CollaborationRelayOptions) {
     authorization: RelayAuthorization
   ): Promise<Peer | null> {
     const limit = await options.maximumParticipants?.(authorization.documentId)
-    let room = await openRoom(authorization)
-    // The room's last peer may have left while it opened; a closed room takes no newcomers.
-    while (rooms.get(room.id) !== room) room = await openRoom(authorization)
+    let room: Room
+    let epoch: number | null | undefined
+    // The room's last peer may have left while it opened, or a restore ended it; a closed room
+    // takes no newcomers. The epoch is read once the room is open, so a restore cannot slip between.
+    do {
+      room = await openRoom(authorization)
+      epoch = await options.currentRoomEpoch?.(authorization.documentId)
+    } while (rooms.get(room.id) !== room)
+    if (epoch != null && authorization.roomEpoch < epoch) {
+      socket.close(RELAY_CLOSE.restored, 'The document was restored')
+      if (room.peers.size === 0) await leaveRoom(room)
+      return null
+    }
     const capacity = Math.min(limit ?? Number.POSITIVE_INFINITY, options.maximumConnectionsPerRoom)
     if (room.peers.size >= capacity) {
       socket.close(RELAY_CLOSE.roomFull, 'Collaboration room is full')
@@ -317,6 +346,13 @@ export function createCollaborationRelay(options: CollaborationRelayOptions) {
       const isClosed = () => state.closed
       const queued: Uint8Array[] = []
       let queuedBytes = 0
+      // Only an editor's writes can be large: a viewer's frames, and a peer's before it is
+      // admitted, fit in one message, so nobody else can make the relay hold more.
+      const assembler = createRelayClientAssembler(() =>
+        peer?.authorization.permission === 'edit'
+          ? MAX_COLLAB_MESSAGE_BYTES
+          : options.maximumMessageBytes
+      )
       const authTimer = setTimeout(
         () => socket.close(RELAY_CLOSE.unauthorized, 'Expected a collaboration ticket'),
         authTimeoutMs
@@ -358,7 +394,13 @@ export function createCollaborationRelay(options: CollaborationRelayOptions) {
           socket.close(RELAY_CLOSE.messageTooLarge, 'Collaboration message is too large')
           return
         }
-        const frame = decodeRelayClientFrame(data)
+        const assembled = assembler.push(data)
+        if (assembled.type === 'partial') return
+        if (assembled.type === 'too-large') {
+          socket.close(RELAY_CLOSE.messageTooLarge, 'Collaboration message is too large')
+          return
+        }
+        const frame = assembled.type === 'frame' ? decodeRelayClientFrame(assembled.data) : null
         if (!frame) {
           socket.close(RELAY_CLOSE.protocol, 'Malformed collaboration frame')
           return
@@ -416,6 +458,41 @@ export function createCollaborationRelay(options: CollaborationRelayOptions) {
           if (peer) depart(peer)
         }
       }
+    },
+
+    /**
+     * Ends a restored document's rooms: everyone in them is told the document was restored, and
+     * their edits to the replaced state are dropped rather than saved.
+     */
+    startOver(documentId: string) {
+      // A map's iteration carries on past entries deleted during it.
+      for (const room of rooms.values()) {
+        if (room.identity.documentId !== documentId) continue
+        rooms.delete(room.id)
+        if (room.persistTimer) clearTimeout(room.persistTimer)
+        for (const peer of room.peers.values()) {
+          clearTimeout(peer.expiry)
+          peer.socket.close(RELAY_CLOSE.restored, 'The document was restored')
+        }
+        room.peers.clear()
+        room.document.destroy()
+      }
+    },
+
+    /** Tells everyone in a document's rooms that its version history changed. */
+    announceVersions(documentId: string) {
+      const frame: RelayServerFrame = {
+        type: 'message',
+        namespace: COLLAB_ACTIONS.versions,
+        from: RELAY_SERVER_PEER,
+        payload: new Uint8Array()
+      }
+      sendAll(
+        [...rooms.values()]
+          .filter((room) => room.identity.documentId === documentId)
+          .flatMap((room) => [...room.peers.values()].map((peer) => peer.socket)),
+        frame
+      )
     },
 
     /** Saves every open room and closes its sockets, as the runtime shuts down. */

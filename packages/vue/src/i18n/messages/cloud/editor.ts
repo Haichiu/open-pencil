@@ -156,6 +156,7 @@ export const cloudMessageDefaults = {
   shareResetLink: 'Reset link',
   shareLinkCopied: 'Link copied',
   shareCopyLink: 'Copy link',
+  shareSendLink: 'Share link',
   shareLoadFailed: 'Couldn’t load who has access. Check your connection and try again.',
   shareChangeFailed: 'That change didn’t go through. Try again in a moment.',
 
@@ -181,6 +182,10 @@ export const cloudMessageDefaults = {
 
   // Status
   statusViewOnlyDetail: 'You can look around and follow others; your changes won’t reach anyone.',
+  statusNotLive: 'Not editing live',
+  statusNotLiveDetail:
+    'The server ended this tab’s live session, so edits no longer pass between it and others. Rejoin to see the latest version.',
+  statusRejoin: 'Rejoin',
   statusSavedTo: params('Saved to {workspace}'),
   statusSavedAgo: params('Saved {time}'),
   statusUpToDate: 'Up to date',
@@ -324,8 +329,36 @@ export const cloudMessageDefaults = {
   syncConflict: 'Edited elsewhere too — choose which version to keep',
   syncError: 'Could not upload changes',
   shareLinkFailed: 'This link doesn’t open a document. Ask for a new one.',
+  documentLinkFailed: 'Couldn’t open this document. Ask its owner for access.',
+  documentLinkUnknownServer: params('Sign in to {host} first to open this link.'),
   shareOpenedInBrowser: 'Opened in the browser',
-  openInDesktopApp: 'Open in the desktop app'
+  openInDesktopApp: 'Open in the desktop app',
+
+  // Version history
+  versionHistory: 'Version history',
+  closeVersionHistory: 'Close version history',
+  currentVersion: 'Current version',
+  addToVersionHistory: 'Add to version history',
+  editVersionInfo: 'Edit version info',
+  versionTitle: 'Title',
+  versionDescription: 'Describe what changed',
+  restoreVersion: 'Restore this version',
+  duplicateVersion: 'Duplicate',
+  deleteVersionInfo: 'Delete version info',
+  versionOptions: 'More options for version',
+  versionFilter: 'Filter versions',
+  versionsAll: 'All',
+  versionsOnlyYours: 'Only yours',
+  showAutosaveVersions: 'Show autosave versions',
+  restoredVersion: params('Restored version: {name}'),
+  restoredVersionUnnamed: 'Restored version',
+  viewingVersion: params('Viewing {name}'),
+  olderVersions: 'Show older versions',
+  noVersions: 'No versions to show',
+  versionsFailed: 'Couldn’t load the version history.',
+  versionFailed: 'Couldn’t open this version.',
+  versionChangeFailed: 'Couldn’t change the version history.',
+  versionCopyName: params('{name} (copy)')
 } as const
 
 export const cloudMessages = i18n('cloud', cloudMessageDefaults)

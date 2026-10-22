@@ -1,5 +1,6 @@
 import type {
   CanvasKit,
+  FontStyle,
   FontWeight,
   Paint,
   Paragraph,
@@ -13,7 +14,8 @@ import type { SceneNode } from '@open-pencil/scene-graph'
 import { resolveRGBAForPreview } from '@open-pencil/scene-graph/color'
 import { resolveNodeTextDirection } from '@open-pencil/scene-graph/text-direction'
 
-import { resolveParagraphFontFamilies } from '#core/canvas/text/font-families'
+import { loadedFace, resolveParagraphFontFamilies } from '#core/canvas/text/font-families'
+import { laidOutText } from '#core/canvas/text/keycap'
 import {
   pushParagraphStyle,
   type ParagraphPaintStyle,
@@ -22,6 +24,7 @@ import {
 import type { TextRenderer } from '#core/canvas/text/renderer'
 import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE } from '#core/constants'
 import { shownTextSlice } from '#core/text/case'
+import { ELLIPSIS } from '#core/text/ellipsis'
 import { fontManager, weightToStyle } from '#core/text/fonts'
 
 import type { ParagraphNode } from './inputs'
@@ -38,7 +41,7 @@ export function buildTruncateOpts(
 ): { maxLines?: number; ellipsis?: string } {
   if (node.textTruncation !== 'ENDING') return {}
 
-  const opts: { maxLines?: number; ellipsis: string } = { ellipsis: '…' }
+  const opts: { maxLines?: number; ellipsis: string } = { ellipsis: ELLIPSIS }
   if (node.maxLines != null && node.maxLines > 0) {
     opts.maxLines = node.maxLines
   } else if (node.height > 0) {
@@ -116,7 +119,22 @@ function blockHeightBehavior(
   return ck.TextHeightBehavior.All
 }
 
-function styleRunColor(
+/**
+ * The style a paragraph asks CanvasKit for: the face of the family that is loaded. Asked for a
+ * face it lacks, CanvasKit slants and emboldens another, which neither Figma, a browser, nor a
+ * native text stack draws the same, so a missing face is drawn as the face that exists and
+ * reported missing, as Figma does. A family with no face loaded asks for the style as given.
+ */
+function drawnFontStyle(ck: CanvasKit, family: string, weight: number, italic: boolean): FontStyle {
+  const face = loadedFace(family, weight, italic) ?? { weight, italic }
+  return {
+    weight: { value: face.weight } as FontWeight,
+    slant: face.italic ? ck.FontSlant.Italic : ck.FontSlant.Upright
+  }
+}
+
+/** The colour a style run's text is drawn in: its first visible solid fill, or `baseColor`. */
+export function styleRunColor(
   ck: CanvasKit,
   style: SceneNode['styleRuns'][number]['style'],
   baseColor: Float32Array
@@ -158,10 +176,7 @@ function pushStyleRun(
     fontFamilies: fontFamilies(runFamily, runWeight, runItalic),
     fontSize: runFontSize,
     locale: styleRunLanguage(style, node),
-    fontStyle: {
-      weight: { value: runWeight } as FontWeight,
-      slant: runItalic ? ck.FontSlant.Italic : ck.FontSlant.Upright
-    },
+    fontStyle: drawnFontStyle(ck, runFamily, runWeight, runItalic),
     fontVariations: textFontVariations(
       style.fontVariations ?? node.fontVariations,
       fontManager.namedInstanceVariations(runFamily, weightToStyle(runWeight, runItalic))
@@ -181,7 +196,7 @@ function addParagraphText(
   start: number,
   end: number
 ): void {
-  builder.addText(shownTextSlice(node, start, end))
+  builder.addText(laidOutText(shownTextSlice(node, start, end)))
 }
 
 function addStyledRuns(
@@ -269,10 +284,12 @@ export function buildSkParagraph(
     ),
     fontSize: baseFontSize,
     locale: node.textLanguage ?? undefined,
-    fontStyle: {
-      weight: { value: node.fontWeight } as FontWeight,
-      slant: node.italic ? ck.FontSlant.Italic : ck.FontSlant.Upright
-    },
+    fontStyle: drawnFontStyle(
+      ck,
+      node.fontFamily || DEFAULT_FONT_FAMILY,
+      node.fontWeight,
+      node.italic
+    ),
     fontVariations: textFontVariations(
       node.fontVariations,
       fontManager.namedInstanceVariations(

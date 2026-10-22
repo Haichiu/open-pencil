@@ -32,6 +32,36 @@ export interface DragDraw {
   cancel: () => void
 }
 
+/**
+ * A connector drawn with the connector tool, from the press to the release or from one click to
+ * the next. Positions are screen pixels, to tell a click from a drag.
+ */
+export interface DragConnectorDraw {
+  type: 'connector-draw'
+  startSX: number
+  startSY: number
+  moved: boolean
+  /** Where the pointer is, in canvas coordinates. */
+  x: number
+  y: number
+  commit: () => void
+  cancel: () => void
+}
+
+/** An end of a selected connector dragged to another layer or point. */
+export interface DragConnectorEnd {
+  type: 'connector-end'
+  commit: () => void
+  cancel: () => void
+}
+
+/** An end of a selected line or arrow dragged to aim it. */
+export interface DragLineEnd {
+  type: 'line-end'
+  commit: () => void
+  cancel: () => void
+}
+
 /** A sticky note being drawn: it grows from the press corner with the drag, as a frame does. */
 export interface DragStickyDraw {
   type: 'sticky-draw'
@@ -177,6 +207,11 @@ export interface DragEditNode {
   startX: number
   startY: number
   origPositions: Map<number, Vector>
+  /**
+   * A selected segment or region that was pressed: releasing without a drag selects only it, or
+   * with Shift takes it out of the selection.
+   */
+  click?: { part: 'segment' | 'region'; index: number; deselect: boolean }
 }
 
 export interface DragEditHandle {
@@ -187,6 +222,17 @@ export interface DragEditHandle {
   startX: number
   startY: number
   initialTangent: Vector | null
+}
+
+/** A drag over empty space while editing a path: selects the points and segments it encloses. */
+export interface DragEditMarquee {
+  type: 'edit-marquee'
+  startX: number
+  startY: number
+  /** Points kept selected alongside the enclosed ones, as with Shift held. */
+  baseSelection: Set<number>
+  /** Segments kept selected alongside the enclosed ones, as with Shift held. */
+  baseSegments: Set<number>
 }
 
 export interface DragBendHandle {
@@ -238,6 +284,9 @@ export type DragState =
   | DragShapeHandle
   | DragDraw
   | DragStickyDraw
+  | DragConnectorDraw
+  | DragConnectorEnd
+  | DragLineEnd
   | DragGradient
   | DragMove
   | DragPan
@@ -250,6 +299,7 @@ export type DragState =
   | DragTextSelect
   | DragEditNode
   | DragEditHandle
+  | DragEditMarquee
   | DragBendHandle
   | DragGuide
 
@@ -261,5 +311,6 @@ export const TOOL_TO_NODE: Partial<Record<Tool, NodeType>> = {
   LINE: 'LINE',
   POLYGON: 'POLYGON',
   STAR: 'STAR',
-  TEXT: 'TEXT'
+  TEXT: 'TEXT',
+  SHAPE_WITH_TEXT: 'SHAPE_WITH_TEXT'
 }

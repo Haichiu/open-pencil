@@ -20,6 +20,14 @@ function inlineFragments(children: (TreeNode | string)[]): (TreeNode | string)[]
   )
 }
 
+/**
+ * The text an element holds as children, such as a sticky note's body or a connector's label.
+ * Elements among its children are not text and are skipped.
+ */
+export function plainTextOf(tree: TreeNode): string {
+  return tree.children.filter((child): child is string => typeof child === 'string').join('')
+}
+
 export function isTreeNode(x: unknown): x is TreeNode {
   if (x === null || typeof x !== 'object') return false
   return (
@@ -151,6 +159,10 @@ export type StyleProps = {
   mask?: boolean | 'alpha' | 'luminance' | 'vector'
   rotate?: number
   rotation?: number
+  /** Reflects the layer across its vertical centre line, before it turns. */
+  flipX?: boolean
+  /** Reflects the layer across its horizontal centre line, before it turns. */
+  flipY?: boolean
   overflow?: 'hidden' | 'visible'
   shadow?: string
   blur?: number
@@ -185,6 +197,14 @@ type NodeProps = StyleProps & {
 }
 
 export type BaseProps = NodeProps & { properties?: never }
+
+/** An `<Ellipse>`'s arc: angles in degrees, clockwise from three o'clock, and its hole. */
+export type EllipseProps = {
+  startAngle?: number
+  endAngle?: number
+  /** The hole as a share of the ellipse, from 0 (none) to 1. */
+  innerRadius?: number
+}
 export type TextProps = BaseProps
 
 /** A `<Span>`'s props: the character styles of `<Text>`, under the same names. */

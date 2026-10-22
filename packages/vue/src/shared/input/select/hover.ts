@@ -1,20 +1,24 @@
 import type { Editor } from '@open-pencil/core/editor'
-import { layerRotates } from '@open-pencil/scene-graph'
+import { layerResizes, layerRotates } from '@open-pencil/scene-graph'
 
 import {
+  MOVE_CURSOR,
   buildResizeCursor,
   cornerRotationCursor,
   getHitHandleByMatrix,
   hitTestCornerRotationByMatrix
 } from '#vue/shared/input/geometry'
+import { lineEndAt } from '#vue/shared/input/line/end'
 import type { HitTestFns } from '#vue/shared/input/select'
 import { hitTestLabel } from '#vue/shared/input/select/hit'
+import { scalesByHandles } from '#vue/shared/input/sticky/scale'
 import { getNodeEditState } from '#vue/shared/input/vector'
 
 function getResizeCursorForSelection(cx: number, cy: number, editor: Editor): string | null {
   for (const id of editor.state.selectedIds) {
     const node = editor.graph.getNode(id)
-    if (!node) continue
+    // As a press does: only a layer its handles resize or scale shows a resize cursor on them.
+    if (!node || (!layerResizes(node) && !scalesByHandles(node))) continue
 
     const handleHit = getHitHandleByMatrix(
       cx,
@@ -83,10 +87,12 @@ export function updateHoverCursor(
     return null
   }
 
-  // As a press does: resizing first, then a label, then rotation; a read-only document has none.
+  // As a press does: a line's ends, then resizing, then a label, then rotation; a read-only
+  // document has none.
   const cursor = editor.state.readOnly
     ? null
-    : (getResizeCursorForSelection(cx, cy, editor) ??
+    : ((lineEndAt(editor, cx, cy) ? MOVE_CURSOR : null) ??
+      getResizeCursorForSelection(cx, cy, editor) ??
       (hitTestLabel(cx, cy, fns) ? null : getRotationCursorForSelection(cx, cy, editor)))
   updateHoveredNode(cx, cy, editor, fns, deep)
   return cursor

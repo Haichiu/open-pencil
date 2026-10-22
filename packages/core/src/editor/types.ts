@@ -5,11 +5,13 @@ import type {
   SceneGraph,
   SceneGraphEvents,
   SceneNode,
+  VectorNetwork,
   VectorSegment,
   VectorVertex
 } from '@open-pencil/scene-graph'
 import type { CanvasGuide } from '@open-pencil/scene-graph/guides'
 import type { Color, Rect, Vector } from '@open-pencil/scene-graph/primitives'
+import type { ShapeWithTextType } from '@open-pencil/scene-graph/shape-with-text'
 import type { SnapGuide } from '@open-pencil/scene-graph/snap'
 import type { UndoManager } from '@open-pencil/scene-graph/undo'
 
@@ -23,6 +25,7 @@ import type {
   SelectionTheme
 } from '#core/canvas/renderer/types'
 import type { InterfaceTheme } from '#core/constants'
+import type { ConnectorTarget } from '#core/editor/connectors/attach'
 import type { PlayState } from '#core/editor/play/actions'
 import type { SnappingPreferences } from '#core/editor/preferences'
 import type { ShaderRasterizer } from '#core/editor/shaders/types'
@@ -42,6 +45,8 @@ export type Tool =
   | 'STAR'
   | 'TEXT'
   | 'STICKY'
+  | 'SHAPE_WITH_TEXT'
+  | 'CONNECTOR'
   | 'PEN'
   | 'PENCIL'
   | 'HAND'
@@ -71,6 +76,8 @@ export interface ShapeHandleHover {
 
 export interface EditorSharedState {
   activeTool: Tool
+  /** The kind the shape-with-text tool places: the one picked last, as in FigJam. */
+  shapeWithTextKind: ShapeWithTextType
   /**
    * The document can be looked at, selected in, and copied from but not changed, as for a viewer
    * or an earlier version; set with `setReadOnly`.
@@ -99,6 +106,18 @@ export interface EditorSharedState {
    * name or CSS name, bump only `sceneVersion`, so the canvas keeps its recorded pictures.
    */
   canvasVersion: number
+}
+
+/**
+ * The path a pen continues, in page coordinates, and where the pen's chain sits in it. The pen
+ * walks one chain out of the network; committing writes the chain back and keeps the rest.
+ */
+export interface ResumedPath {
+  network: VectorNetwork
+  /** Each chain vertex's index in `network`. */
+  vertices: number[]
+  /** Each chain segment's index in `network`, and whether the chain runs it from end to start. */
+  segments: Array<{ index: number; reversed: boolean }>
 }
 
 export interface PencilState {
@@ -138,6 +157,7 @@ export interface EditorViewState {
     pendingClose?: boolean
     closingToFirst: boolean
     resumingNodeId?: string
+    resumedPath?: ResumedPath
     resumedFills?: SceneNode['fills']
     resumedStrokes?: SceneNode['strokes']
   } | null
@@ -152,6 +172,8 @@ export interface EditorViewState {
     side?: 'top' | 'right' | 'bottom' | 'left'
   } | null
   shapeHandleHover: ShapeHandleHover | null
+  /** The layer a connector end being drawn or dragged would attach to, and by which magnet. */
+  connectorTarget: ConnectorTarget | null
   panX: number
   pageColor: Color
   panY: number

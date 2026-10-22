@@ -21,6 +21,10 @@ export const COMPONENT_COLOR = { r: 0.592, g: 0.278, b: 1, a: 1 } satisfies Colo
 export const SLOT_COLOR = { r: 0.949, g: 0.294, b: 0.737, a: 1 } satisfies Color
 export const SLOT_EMPTY_FILL_ALPHA = 0.08
 export const SNAP_COLOR = { r: 1.0, g: 0.0, b: 0.56, a: 1 } satisfies Color
+/** Guides through path vertices and their crosses, measured from Figma's pen and vector edit mode. */
+export const VERTEX_SNAP_COLOR = { r: 0.81, g: 0.3, b: 0.18, a: 1 } satisfies Color
+export const VERTEX_SNAP_GUIDE_ALPHA = 0.6
+export const VERTEX_SNAP_MARK_RADIUS = 2.5
 export const MEASUREMENT_COLOR = { r: 0.949, g: 0.282, b: 0.133, a: 1 } satisfies Color
 export const MEASUREMENT_PILL_PADDING_X = 5
 export const MEASUREMENT_PILL_HEIGHT = 18
@@ -44,6 +48,7 @@ export const RULER_HIGHLIGHT_ALPHA = 0.3
 
 export const PEN_HANDLE_RADIUS = 2.5
 export const PEN_VERTEX_RADIUS = 3
+export const PEN_ANCHOR_RADIUS = 4
 export const PEN_CLOSE_RADIUS_BOOST = 2
 export const PEN_PATH_STROKE_WIDTH = 2
 export const PARENT_OUTLINE_ALPHA = 0.5
@@ -161,6 +166,7 @@ export const AI_DONE_DURATION_MS = 800
 
 /** Opacity of the selection color behind selected text while editing. */
 export const TEXT_SELECTION_ALPHA = 0.3
+/** The caret's colour where the text's fill gives it none, as Figma's. */
 export const TEXT_CARET_COLOR = BLACK
 export const TEXT_CARET_WIDTH = 1
 
@@ -236,6 +242,9 @@ export type AIProviderID =
   | 'harness:pi'
   | `acp:${ACPAgentID}`
 
+export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number]
+
 export interface ModelOption {
   id: string
   name: string
@@ -244,6 +253,8 @@ export interface ModelOption {
   recommendedMaxOutputTokens?: number
   releaseDate?: string
   status?: 'active' | 'beta' | 'deprecated'
+  /** Lowest reasoning effort the model accepts; lower thinking levels, Off included, use it. */
+  minReasoningEffort?: ReasoningEffort
 }
 
 export interface AIProviderDef {
@@ -453,16 +464,15 @@ export const AI_PROVIDERS: AIProviderDef[] = [
     name: 'MiniMax',
     keyPlaceholder: 'API key',
     keyURL: 'https://platform.minimax.io/user-center/basic-information/interface-key',
-    defaultModel: 'MiniMax-M3',
+    defaultModel: 'MiniMax-M3.1-Flash',
     models: [
-      { id: 'MiniMax-M3', name: 'MiniMax-M3', tag: 'Best' },
-      { id: 'MiniMax-M2.7', name: 'MiniMax-M2.7' },
-      { id: 'MiniMax-M2.7-highspeed', name: 'MiniMax-M2.7-highspeed', tag: 'Fast' },
-      { id: 'MiniMax-M2.5', name: 'MiniMax-M2.5' },
-      { id: 'MiniMax-M2.5-highspeed', name: 'MiniMax-M2.5 Highspeed', tag: 'Fast' },
-      { id: 'MiniMax-M2.1', name: 'MiniMax-M2.1' },
-      { id: 'MiniMax-M2.1-highspeed', name: 'MiniMax-M2.1 Highspeed', tag: 'Fast' },
-      { id: 'MiniMax-M2', name: 'MiniMax-M2' }
+      {
+        id: 'MiniMax-M3.1-Flash',
+        name: 'MiniMax-M3.1-Flash',
+        tag: 'Best',
+        minReasoningEffort: 'low'
+      },
+      { id: 'MiniMax-M3', name: 'MiniMax-M3' }
     ]
   },
   {

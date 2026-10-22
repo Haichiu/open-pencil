@@ -1,4 +1,10 @@
-import { CLOUD_PROTOCOL_VERSION, parseCloudDiscovery, type CloudDiscovery } from '#cloud/contract'
+import {
+  CLOUD_AI_CONTRACT_VERSION,
+  CLOUD_PROTOCOL_VERSION,
+  parseCloudDiscovery,
+  type CloudDiscovery
+} from '#cloud/contract'
+import { withoutTrailingSlash } from 'ufo'
 
 import type { CloudServerConfig } from './schema'
 
@@ -40,8 +46,8 @@ export function cloudDiscoveryFromConfig(config: CloudServerConfig): CloudDiscov
   return parseCloudDiscovery({
     protocolVersion: CLOUD_PROTOCOL_VERSION,
     deployment: config.deployment,
-    apiURL: new URL('/api', config.publicURL).href.replace(/\/$/, ''),
-    authURL: new URL('/api/auth', config.publicURL).href.replace(/\/$/, ''),
+    apiURL: withoutTrailingSlash(new URL('/api', config.publicURL).href),
+    authURL: withoutTrailingSlash(new URL('/api/auth', config.publicURL).href),
     appURL: config.appURL ?? config.publicURL,
     authentication,
     capabilities: {
@@ -51,6 +57,10 @@ export function cloudDiscoveryFromConfig(config: CloudServerConfig): CloudDiscov
     },
     listing: config.listingMinimumEditorVersion
       ? { minimumEditorVersion: config.listingMinimumEditorVersion }
-      : undefined
+      : undefined,
+    ai: config.aiEndpoint
+      ? { endpoint: config.aiEndpoint, contractVersion: CLOUD_AI_CONTRACT_VERSION }
+      : undefined,
+    billing: config.billingPortalURL ? { portalURL: config.billingPortalURL } : undefined
   })
 }

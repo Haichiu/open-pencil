@@ -15,12 +15,14 @@ import { handleToolMouseDown } from '#vue/canvas/tools/input'
 import { createCanvasTransformInput } from '#vue/canvas/transform/input'
 import { finishMarquee } from '#vue/canvas/transform/marquee'
 import {
+  cancelNodeEditDrag,
   handleBendHandleMove,
   handleNodeEditPointerUp,
   updateNodeEditHover
 } from '#vue/canvas/vector-input/input'
 import { resolveAutoLayoutHover } from '#vue/shared/input/auto-layout-hover'
 import { createClickCounter } from '#vue/shared/input/click-count'
+import { handleConnectorDrawMove } from '#vue/shared/input/connector/draw'
 import { handleDrawMove } from '#vue/shared/input/draw'
 import { cancelMove, handleMoveMove, handleMoveUp } from '#vue/shared/input/move/drag'
 import { setupPanZoom } from '#vue/shared/input/pan/zoom'
@@ -30,7 +32,7 @@ import { resolveShapeHandleHover } from '#vue/shared/input/shape-handles'
 import { useSpaceHeld } from '#vue/shared/input/space-key'
 import { applyStickyScale } from '#vue/shared/input/sticky/scale'
 import type { DragState } from '#vue/shared/input/types'
-import { handleNodeEditMove } from '#vue/shared/input/vector'
+import { handleNodeEditMarqueeMove, handleNodeEditMove } from '#vue/shared/input/vector'
 
 /**
  * Wires pointer and mouse interaction to an OpenPencil canvas.
@@ -39,6 +41,16 @@ import { handleNodeEditMove } from '#vue/shared/input/vector'
  * panning, drawing tools, scoped hit testing, and text-edit interaction.
  * It is primarily intended for editor shell components that own the canvas.
  */
+/** Drags Escape abandons, leaving the document as it was before the press. */
+const ESCAPABLE_DRAGS: ReadonlySet<DragState['type']> = new Set<DragState['type']>([
+  'draw',
+  'gradient',
+  'rotate',
+  'connector-draw',
+  'connector-end',
+  'line-end'
+])
+
 export function useCanvasInput(
   canvasRef: Ref<HTMLCanvasElement | null>,
   editor: Editor,
@@ -255,6 +267,10 @@ export function useCanvasInput(
       editor.setShapeHandleHover(shapeHandleHoverAt(sx, sy, e.altKey))
     }
 
+    if (!drag.value && editor.state.activeTool === 'CONNECTOR') {
+      editor.connectorHover(coords.cx, coords.cy)
+    }
+
     if (!drag.value && editor.state.activeTool === 'SELECT') {
       const { sx, sy, cx, cy } = coords
       const guideCursor = editor.state.readOnly ? null : guideInput.updateHover(sx, sy)
@@ -335,6 +351,11 @@ export function useCanvasInput(
       return
     }
 
+    if (d.type === 'edit-marquee') {
+      handleNodeEditMarqueeMove(d, cx, cy, editor)
+      return
+    }
+
     if (d.type === 'draw') {
       handleDrawMove(d, cx, cy, e.shiftKey)
       return
@@ -342,6 +363,21 @@ export function useCanvasInput(
 
     if (d.type === 'sticky-draw') {
       d.move(cx, cy)
+      return
+    }
+
+    if (d.type === 'connector-draw') {
+      handleConnectorDrawMove(d, cx, cy, sx, sy, editor)
+      return
+    }
+
+    if (d.type === 'connector-end') {
+      editor.connectorEndpointDrag(cx, cy)
+      return
+    }
+
+    if (d.type === 'line-end') {
+      editor.lineEndDrag(cx, cy, { shift: e.shiftKey, alt: e.altKey })
       return
     }
 
@@ -401,10 +437,10 @@ export function useCanvasInput(
     guideInput.clearHoverAndPreview()
   }
 
-  /** Drops what a resize or pencil stroke showed without changing the document. */
+  /** Drops what a drag showed without changing the document. */
   function discardDrawnPreview(d: DragState) {
     if (d.type === 'resize') cancelResizePreview(d, editor)
-    else if (d.type === 'sticky-scale' || d.type === 'sticky-draw') d.cancel()
+    else if ('cancel' in d) d.cancel()
     else if (d.type === 'pencil-drag') editor.pencilCancel()
   }
 
@@ -414,11 +450,7 @@ export function useCanvasInput(
     if (d.type === 'move') cancelMove(d, editor)
     else if (d.type === 'rotate') {
       if (editor.state.rotationPreview?.nodeId === d.nodeId) editor.setRotationPreview(null)
-    } else if (d.type === 'draw' || d.type === 'gradient' || d.type === 'shape-handle') d.cancel()
-    else if (d.type === 'edit-node' || d.type === 'edit-handle' || d.type === 'bend-handle') {
-      const methods = editor as Editor & { nodeEditCancelDrag?: () => void }
-      methods.nodeEditCancelDrag?.()
-    }
+    } else cancelNodeEditDrag(d, editor)
   }
 
   function cancelPointerInteraction() {
@@ -468,10 +500,12 @@ export function useCanvasInput(
     (event) => {
       if (event.code !== 'Escape' || event.isComposing || !isEnabled()) return
       const type = drag.value?.type
-      if (type !== 'draw' && type !== 'gradient' && type !== 'rotate') return
+      // A vector edit marquee carries on through Escape, as in Figma, and keeps the path open.
+      const swallowed = type === 'edit-marquee'
+      if (!type || (!ESCAPABLE_DRAGS.has(type) && !swallowed)) return
       event.preventDefault()
       event.stopImmediatePropagation()
-      cancelPointerInteraction()
+      if (!swallowed) cancelPointerInteraction()
     },
     { capture: true }
   )

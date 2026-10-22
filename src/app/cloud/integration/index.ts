@@ -6,10 +6,19 @@
 import { watchCloudRooms } from '../rooms/live'
 import { startCloudSessions } from '../sessions/startup'
 
+export { cloudDocumentAddress } from '../documents/link'
 export { isCloudBinding } from '../documents/status'
+export { openCloudShare } from '../sharing/dialog'
 export { cloudSaveDestinations, cloudUploadFailure, signInToSaveTo } from '../documents/save'
 export { useHomeCloud } from '../home'
 export { CLOUD_STORAGE_PROVIDER_ID } from '../sessions/token'
+export {
+  isVersionHistoryOpen,
+  openVersionDialog,
+  openVersionHistory,
+  shownEditorStore,
+  versionPreviewKey
+} from '../versions/history'
 
 /** This build has Cloud; whether it shows depends on the server's listing or a preview. */
 export const CLOUD_INCLUDED: boolean = true

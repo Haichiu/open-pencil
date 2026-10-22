@@ -2,9 +2,26 @@ import { uniq } from 'es-toolkit/array'
 
 import { ResourceCache } from '#core/cache/resource'
 import { DEFAULT_FONT_FAMILY } from '#core/constants'
-import { fontManager } from '#core/text/fonts'
+import { EMOJI_METRICS_FAMILY } from '#core/text/emoji'
+import type { FamilyFace } from '#core/text/font/faces'
+import { fontManager, fontWeightMatchOrder, weightToStyle } from '#core/text/fonts'
 
 const familiesCache = new ResourceCache<string, string[]>({ maxEntries: 256 })
+
+/**
+ * The loaded face of a family that text asking for a style is drawn in: that style, or the
+ * nearest loaded weight in the same slant, then the other, as font matching picks it; `null`
+ * when the family has none loaded.
+ */
+export function loadedFace(family: string, weight: number, italic: boolean): FamilyFace | null {
+  for (const slant of [italic, !italic]) {
+    for (const candidate of fontWeightMatchOrder(weight)) {
+      if (fontManager.isStyleLoaded(family, weightToStyle(candidate, slant)))
+        return { weight: candidate, italic: slant }
+    }
+  }
+  return null
+}
 
 export function resolveParagraphFontFamilies(
   primary: string,
@@ -24,7 +41,8 @@ export function resolveParagraphFontFamilies(
   if (cached) return cached
   const families = [renderPrimary]
   if (primary !== DEFAULT_FONT_FAMILY) families.push(DEFAULT_FONT_FAMILY)
-  families.push(...renderArabicFallbacks, ...renderCJKFallbacks)
+  // Emoji come last, so a character a script's font has stays in that font.
+  families.push(...renderArabicFallbacks, ...renderCJKFallbacks, EMOJI_METRICS_FAMILY)
   const resolved = uniq(families)
   familiesCache.set(key, resolved)
   return resolved

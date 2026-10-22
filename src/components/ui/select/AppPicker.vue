@@ -47,11 +47,17 @@ export interface AppPickerProps {
 
 export interface AppPickerSlots {
   /** The control that opens the picker; rendered as the popover trigger. */
-  trigger(): VNode[]
+  trigger?(): VNode[]
+  /**
+   * What the list opens beside when the owner opens it through `v-model:open` instead of a
+   * trigger, such as from a context menu; used when there is no `trigger`.
+   */
+  anchor?(): VNode[]
   /** Thumbnail or icon before an item's label. */
   leading?(props: { item: AppPickerItem }): VNode[]
   /** A control at the end of the search field that narrows the list, such as a category. */
   'search-trailing'?(): VNode[]
+  trailing?(props: { item: AppPickerItem }): VNode[]
   /** Actions or details below the list; `highlighted` is the item under the pointer or keys. */
   footer?(props: { close: () => void; highlighted: AppPickerItem | null }): VNode[]
 }
@@ -66,6 +72,7 @@ import {
   ListboxGroupLabel,
   ListboxItem,
   ListboxRoot,
+  PopoverAnchor,
   PopoverClose,
   PopoverContent,
   PopoverPortal,
@@ -99,7 +106,11 @@ const {
   align = 'start',
   ui
 } = defineProps<AppPickerProps>()
-const emit = defineEmits<{ select: [value: string]; loadMore: [] }>()
+const emit = defineEmits<{
+  select: [value: string]
+  loadMore: []
+  closeAutoFocus: [event: Event]
+}>()
 const slots = defineSlots<AppPickerSlots>()
 const open = defineModel<boolean>('open', { default: false })
 const { portalActive } = useRetainedPopup(open, () => close())
@@ -179,11 +190,14 @@ function select(value: AcceptableValue) {
 
 <template>
   <PopoverRoot v-model:open="open">
-    <Tip as-child :label="tooltip" :disabled="!tooltip">
+    <Tip v-if="slots.trigger" as-child :label="tooltip" :disabled="!tooltip">
       <PopoverTrigger as-child>
         <slot name="trigger" />
       </PopoverTrigger>
     </Tip>
+    <PopoverAnchor v-else as-child>
+      <slot name="anchor" />
+    </PopoverAnchor>
     <PopoverPortal v-if="portalActive">
       <PopoverContent
         :side="side"
@@ -193,6 +207,7 @@ function select(value: AcceptableValue) {
         :aria-label="heading"
         :class="styles.content({ class: ui?.content })"
         @open-auto-focus.prevent
+        @close-auto-focus="emit('closeAutoFocus', $event)"
       >
         <div :class="styles.header({ class: ui?.header })">
           <h3 :class="styles.title({ class: ui?.title })">{{ heading }}</h3>
@@ -270,6 +285,7 @@ function select(value: AcceptableValue) {
                     {{ item.description }}
                   </span>
                 </span>
+                <slot name="trailing" :item="item" />
                 <icon-lucide-check
                   v-if="item.value === selected"
                   :class="styles.check({ class: ui?.check })"

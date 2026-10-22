@@ -6,16 +6,23 @@ import type { ArrowEndpoint } from '@open-pencil/scene-graph/arrow-caps'
 import {
   arrowCapOverflow,
   collectArrowEndpoints,
-  lineArrowEndpoints
+  hasTrimmedShaft,
+  lineArrowEndpoints,
+  trimArrowShafts
 } from '@open-pencil/scene-graph/arrow-caps'
-import { computeDescendantVisualBounds } from '@open-pencil/scene-graph/geometry'
 import Matrix from '@open-pencil/scene-graph/matrix'
 import type { Color } from '@open-pencil/scene-graph/primitives'
 
 import { createSceneGeometry, nodeOrientationMatrix, projectedNode } from '#core/geometry'
 import { shownText } from '#core/text/case'
+import { mayHoldEmoji } from '#core/text/emoji'
 import { fontManager } from '#core/text/fonts'
-import { addStrokeRunToPath, strokeRuns, vectorNetworkToCenterlinePath } from '#core/vector'
+import {
+  addStrokeRunToPath,
+  strokeRuns,
+  vectorNetworkToCenterlinePath,
+  vectorNetworkToPath
+} from '#core/vector'
 
 import { figmaBlendModeToSkia, needsIsolatedBlendLayer } from './blend'
 import { renderBooleanOperation } from './boolean'
@@ -29,6 +36,9 @@ import {
   effectRasterScale,
   effectRasterScaleMatches
 } from './renderer/effect-raster-cache'
+import { mapVisualBounds, subtreeVisualBounds } from './renderer/visual-bounds'
+import { renderLayerShadows } from './shadows'
+import { isLayerContainer } from './shadows/silhouette'
 import { makeSmoothRRectPath, nodeHasRadius, nodeHasSmoothCorners } from './shapes'
 import {
   configureStrokePaint,
@@ -40,14 +50,18 @@ import {
   getStrokeJoinEntity,
   normalizeDashPattern
 } from './strokes'
+import { drawOutlinedDashes } from './strokes/outlined-dashes'
+import { drawDashedRectStroke, strokeDashesByOutline, strokeSideWeights } from './strokes/sides'
 import { textVerticalOffset, withTextParagraph } from './text'
 import { drawTextLayout } from './text/decorations'
 import {
   canDrawSavedText,
   drawDerivedText,
   drawReflowedPathTextSilhouettes,
+  drawsSavedText,
   isReflowedPathText
 } from './text/derived'
+import { drawLaidOutEmoji, drawSavedEmoji } from './text/emoji'
 import { stickyPlaceholderNode } from './text/sticky-placeholder'
 
 function drawVisibleFills(
@@ -277,45 +291,34 @@ function viewportLayerBounds(
   const inverse = Matrix.invert(createSceneGeometry(graph, preview).worldMatrix(node))
   if (!inverse) return null
   const viewport = r.worldViewport
-  const points = Matrix.mapPoints(inverse, [
-    viewport.x,
-    viewport.y,
-    viewport.x + viewport.w,
-    viewport.y,
-    viewport.x + viewport.w,
-    viewport.y + viewport.h,
-    viewport.x,
-    viewport.y + viewport.h
-  ])
-  const xs = [points[0], points[2], points[4], points[6]]
-  const ys = [points[1], points[3], points[5], points[7]]
+  const bounds = mapVisualBounds(inverse, {
+    minX: viewport.x,
+    minY: viewport.y,
+    maxX: viewport.x + viewport.w,
+    maxY: viewport.y + viewport.h
+  })
   return r.ck.LTRBRect(
-    Math.min(...xs) - padding,
-    Math.min(...ys) - padding,
-    Math.max(...xs) + padding,
-    Math.max(...ys) + padding
+    bounds.minX - padding,
+    bounds.minY - padding,
+    bounds.maxX + padding,
+    bounds.maxY + padding
   )
 }
 
+/**
+ * The layer opens after the node's x/y translation and before its rotation and flips, so the
+ * subtree is measured through its orientation matrix.
+ */
 function nodeIsolationLayerBounds(
   r: SkiaRenderer,
   graph: SceneGraph,
   node: SceneNode,
-  nodeId: string,
-  absX: number,
-  absY: number,
   preview?: RenderOverlays['rotationPreview']
 ): Float32Array {
   const viewportBounds = viewportLayerBounds(r, graph, node, 0, preview)
   if (viewportBounds) return viewportBounds
-  const bounds = computeDescendantVisualBounds(
-    [nodeId],
-    (id) => graph.getNode(id) ?? undefined,
-    (id) => graph.getAbsolutePosition(id)
-  )
-  return bounds
-    ? r.ck.LTRBRect(bounds.minX - absX, bounds.minY - absY, bounds.maxX - absX, bounds.maxY - absY)
-    : r.ck.LTRBRect(0, 0, node.width, node.height)
+  const bounds = subtreeVisualBounds(graph, node, nodeOrientationMatrix(node, preview), preview)
+  return r.ck.LTRBRect(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY)
 }
 
 /**
@@ -357,15 +360,7 @@ export function renderNode(
 
   const needsNodeLayer = node.opacity < 1 || needsIsolatedBlendLayer(node.blendMode)
   if (needsNodeLayer) {
-    const layerBounds = nodeIsolationLayerBounds(
-      r,
-      graph,
-      node,
-      nodeId,
-      absX,
-      absY,
-      overlays.rotationPreview
-    )
+    const layerBounds = nodeIsolationLayerBounds(r, graph, node, overlays.rotationPreview)
     r.opacityPaint.setAlphaf(node.opacity)
     r.opacityPaint.setBlendMode(figmaBlendModeToSkia(r.ck, node.blendMode))
     canvas.saveLayer(r.opacityPaint, layerBounds)
@@ -395,6 +390,7 @@ export function renderNode(
   }
 
   applyNodeTransforms(canvas, node, overlays)
+  renderLayerShadows(r, canvas, graph, node, 'behind')
   renderNodeContent(r, canvas, graph, node, overlays)
   drawLayoutGrids(r, canvas, node)
   renderChildren(
@@ -407,6 +403,7 @@ export function renderNode(
     absY,
     hasTransformedAncestor || hasNodeTransform(projectedNode(node, overlays.rotationPreview))
   )
+  renderLayerShadows(r, canvas, graph, node, 'front')
 
   if (layerBlur) {
     canvas.restore()
@@ -473,8 +470,10 @@ export function renderSection(
   forVisibleStrokes(r, node, graph, (stroke, color) => {
     configureStrokePaint(r, node, stroke, color)
 
-    if (node.independentStrokeWeights) r.drawIndividualSideStrokes(canvas, node, stroke.align)
-    else r.drawRRectStrokeWithAlign(canvas, rrect, node, stroke)
+    if (node.independentStrokeWeights) r.drawIndividualSideStrokes(canvas, node, stroke)
+    else if (!drawFigmaDashes(r, canvas, node, stroke)) {
+      r.drawRRectStrokeWithAlign(canvas, rrect, node, stroke)
+    }
   })
 }
 
@@ -487,6 +486,8 @@ export function renderComponentSet(
   const rrect = fillRoundedBounds(r, canvas, node, graph)
   // A set without a stroke gets its dashed editing border from the overlay pass.
   forVisibleStrokes(r, node, graph, (stroke, color) => {
+    configureStrokePaint(r, node, stroke, color)
+    if (drawFigmaDashes(r, canvas, node, stroke)) return
     const dashPhase = stroke.dashPattern?.[1] ?? 0
     if (stroke.dashPattern && stroke.dashPattern.length > 0) {
       drawDashedRRectWithSolidCorners(
@@ -505,8 +506,18 @@ export function renderComponentSet(
   })
 }
 
+/** The effects `renderShape` draws: a container's shadows are drawn around its children instead. */
+function shapeEffects(node: SceneNode): SceneNode['effects'] {
+  const ownShadows = !isLayerContainer(node)
+  return node.effects.filter(
+    (effect) =>
+      effect.visible &&
+      (ownShadows || (effect.type !== 'DROP_SHADOW' && effect.type !== 'INNER_SHADOW'))
+  )
+}
+
 function canRasterCacheEffects(node: SceneNode): boolean {
-  const visibleEffects = node.effects.filter((effect) => effect.visible)
+  const visibleEffects = shapeEffects(node)
   return (
     visibleEffects.length > 0 &&
     visibleEffects.every(
@@ -521,7 +532,7 @@ export function renderShape(
   node: SceneNode,
   graph: SceneGraph
 ): void {
-  const hasEffects = node.effects.some((effect) => effect.visible)
+  const hasEffects = shapeEffects(node).length > 0
   if (r.viewportImageRendering || !hasEffects) {
     r.renderShapeUncached(canvas, node, graph)
     return
@@ -584,8 +595,7 @@ export function renderShape(
         height,
         scale,
         pixels: image.width() * image.height(),
-        fontGeneration: r.fontGeneration,
-        dependencyIds: node.childIds.slice(0, 1)
+        fontGeneration: r.fontGeneration
       })
       try {
         canvas.drawImageRectOptions(
@@ -614,7 +624,6 @@ export function renderShape(
   if (cached) cached.delete()
   r.nodePictureCache.delete(node.id)
   r.nodePictureCacheGenerations.delete(node.id)
-  r.nodePictureCacheDependencies.delete(node.id)
 
   const bounds = r.ck.LTRBRect(-margin, -margin, node.width + margin, node.height + margin)
   const recorder = new r.ck.PictureRecorder()
@@ -624,21 +633,10 @@ export function renderShape(
     const picture = recorder.finishRecordingAsPicture()
     r.nodePictureCache.set(node.id, picture)
     r.nodePictureCacheGenerations.set(node.id, r.fontGeneration)
-    const shadowChild = getShadowShapeChild(node, graph)
-    r.nodePictureCacheDependencies.set(node.id, shadowChild ? [shadowChild.id] : [])
     canvas.drawPicture(picture)
   } finally {
     recorder.delete()
   }
-}
-
-function getShadowShapeChild(node: SceneNode, graph: SceneGraph): SceneNode | null {
-  if (node.fills.some((f) => f.visible)) return null
-  if (node.strokes.some((stroke) => stroke.visible)) return null
-  if (node.childIds.length === 0) return null
-  const child = graph.getNode(node.childIds[0])
-  if (!child?.visible) return null
-  return child
 }
 
 function drawVectorStrokeGeometry(
@@ -729,6 +727,29 @@ function drawVectorPathStrokes(
   else for (const outline of outlines) outline.delete()
 }
 
+/**
+ * Draws a dashed stroke on a rectangle, frame, section, or component set with Figma's dash
+ * layout, and returns false when the stroke has no dashes or has round or square dash ends on
+ * sides of their own weights, which that layout does not cover.
+ */
+function drawFigmaDashes(
+  r: SkiaRenderer,
+  canvas: Canvas,
+  node: SceneNode,
+  stroke: SceneNode['strokes'][0]
+): boolean {
+  const dash = normalizeDashPattern(stroke.dashPattern)
+  if (dash.length === 0) return false
+  if (strokeDashesByOutline(node, stroke)) {
+    drawDashedRectStroke(r, canvas, node, stroke, strokeSideWeights(node, stroke), dash)
+  } else if (node.independentStrokeWeights) {
+    return false
+  } else {
+    drawOutlinedDashes(r, canvas, node, stroke, dash)
+  }
+  return true
+}
+
 function drawRegularStroke(
   r: SkiaRenderer,
   canvas: Canvas,
@@ -739,15 +760,12 @@ function drawRegularStroke(
   sc: Color
 ): void {
   configureStrokePaint(r, node, stroke, sc)
-  if (stroke.dashPattern && stroke.dashPattern.length > 0) {
-    r.strokePaint.setPathEffect(r.ck.PathEffect.MakeDash(stroke.dashPattern, 0))
-  } else {
-    r.strokePaint.setPathEffect(null)
-  }
+  const dash = normalizeDashPattern(stroke.dashPattern)
+  r.strokePaint.setPathEffect(dash.length > 0 ? r.ck.PathEffect.MakeDash(dash, 0) : null)
 
   if (node.independentStrokeWeights && r.isRectangularType(node.type)) {
-    r.drawIndividualSideStrokes(canvas, node, stroke.align)
-  } else {
+    r.drawIndividualSideStrokes(canvas, node, stroke)
+  } else if (!r.isRectangularType(node.type) || !drawFigmaDashes(r, canvas, node, stroke)) {
     r.drawStrokeWithAlign(canvas, node, rect, hasRadius, stroke.align)
   }
 }
@@ -856,9 +874,26 @@ function paintNodeStrokes(
       node.type === 'VECTOR' &&
       node.vectorNetwork
     ) {
-      const centerline = vectorNetworkToCenterlinePath(r.ck, node.vectorNetwork)
+      const centerline = vectorNetworkToCenterlinePath(r.ck, node.vectorNetwork, node.cornerRadius)
       drawVectorPathStrokes(r, canvas, [centerline], stroke, color, node.strokeMiterLimit)
       centerline.delete()
+      drawNodeArrowHeads(r, canvas, node, stroke, color)
+      return
+    }
+    const cap = stroke.cap ?? node.strokeCap
+    if (
+      !sg &&
+      stroke.align === 'CENTER' &&
+      node.type === 'VECTOR' &&
+      node.vectorNetwork &&
+      hasTrimmedShaft(node.vectorNetwork, cap)
+    ) {
+      // The line stops short of a triangle or equilateral head, so it is stroked from its own
+      // pulled-back copy rather than the cached paths; saved stroke geometry is already trimmed.
+      const network = trimArrowShafts(node.vectorNetwork, cap, stroke.weight)
+      const paths = vectorNetworkToPath(r.ck, network, node.cornerRadius)
+      drawVectorPathStrokes(r, canvas, paths, stroke, color, node.strokeMiterLimit)
+      for (const path of paths) path.delete()
       drawNodeArrowHeads(r, canvas, node, stroke, color)
       return
     }
@@ -867,6 +902,7 @@ function paintNodeStrokes(
   })
 }
 
+/** Draws a shape with its own effects: Figma puts inner shadows over fills and under strokes. */
 export function renderShapeUncached(
   r: SkiaRenderer,
   canvas: Canvas,
@@ -875,10 +911,23 @@ export function renderShapeUncached(
 ): void {
   const rect = r.ck.LTRBRect(0, 0, node.width, node.height)
   const hasRadius = nodeHasRadius(node)
+  r.renderEffects(canvas, node, graph, rect, hasRadius, 'behind')
+  paintShapeContent(r, canvas, node, graph, () =>
+    r.renderEffects(canvas, node, graph, rect, hasRadius, 'inner')
+  )
+  r.renderEffects(canvas, node, graph, rect, hasRadius, 'front')
+}
 
-  const shadowChild = getShadowShapeChild(node, graph)
-  r.renderEffects(canvas, node, rect, hasRadius, 'behind', shadowChild)
-
+/** Draws a shape's fills and strokes without its effects; `afterFills` runs between the two. */
+export function paintShapeContent(
+  r: SkiaRenderer,
+  canvas: Canvas,
+  node: SceneNode,
+  graph: SceneGraph,
+  afterFills?: () => void
+): void {
+  const rect = r.ck.LTRBRect(0, 0, node.width, node.height)
+  const hasRadius = nodeHasRadius(node)
   const sg = node.strokeGeometry.length > 0 ? r.getStrokeGeometry(node) : null
   const vectorPaths = node.type === 'VECTOR' ? r.getVectorPaths(node) : null
   const vectorStroke = node.type === 'VECTOR' ? vectorStrokePaths(r, node) : null
@@ -897,11 +946,12 @@ export function renderShapeUncached(
   if (!drawVectorMultiStyleFills(r, canvas, node, graph)) {
     drawVisibleFills(r, node, graph, (fill) => r.drawNodeFill(canvas, node, rect, hasRadius, fill))
   }
+  if (node.type === 'TEXT') drawTextEmoji(r, canvas, node)
+  afterFills?.()
 
   if (!pathTextStrokeFirst && !reflowedPathText) {
     paintNodeStrokes(r, canvas, node, graph, rect, hasRadius, sg, vectorPaths, vectorStroke)
   }
-  r.renderEffects(canvas, node, rect, hasRadius, 'front', shadowChild)
 }
 
 function hasComplexTextFill(fill?: Fill): boolean {
@@ -938,16 +988,46 @@ function drawResolvedPathText(
   r: SkiaRenderer,
   canvas: Canvas,
   node: SceneNode,
-  fontReadiness: ReturnType<SkiaRenderer['nodeFontReadiness']>
+  fontReadiness: ReturnType<SkiaRenderer['nodeFontReadiness']>,
+  fill?: Fill
 ): boolean {
   return (
     // Resolving the exact face must not replace curved glyph placement with a straight paragraph.
-    fontReadiness !== 'exhausted' && node.textPathData !== null && drawDerivedText(r, canvas, node)
+    fontReadiness !== 'exhausted' &&
+    node.textPathData !== null &&
+    drawDerivedText(r, canvas, node, fill)
   )
 }
 
+/** Whether the text is drawn from the editor's own layout, which leaves its emoji to be drawn. */
+function drawsLaidOutText(r: SkiaRenderer, node: SceneNode): boolean {
+  if (!r.fontsLoaded || !r.fontProvider || node.textPathData !== null) return false
+  const readiness = r.nodeFontReadiness(node)
+  return readiness !== 'pending' && readiness !== 'exhausted' && mayHoldEmoji(shownText(node))
+}
+
+/**
+ * The emoji of a text, once whatever fills it has, clipped as its glyphs are: over its saved
+ * glyphs' placeholder squares, or over the blank squares the editor's layout gives them.
+ */
+function drawTextEmoji(r: SkiaRenderer, canvas: Canvas, node: SceneNode): void {
+  const saved = drawsSavedText(node)
+  if (!saved && !drawsLaidOutText(r, node)) return
+  canvas.save()
+  if (shouldClipTextToLayoutBox(node)) {
+    canvas.clipRect(r.ck.LTRBRect(0, 0, node.width, node.height), r.ck.ClipOp.Intersect, false)
+  }
+  if (saved) drawSavedEmoji(r, canvas, node)
+  else {
+    withTextParagraph(r, node, r.ck.BLACK, { halfLeading: true }, (paragraph) =>
+      drawLaidOutEmoji(r, canvas, node, paragraph, textVerticalOffset(node, paragraph.getHeight()))
+    )
+  }
+  canvas.restore()
+}
+
 function drawSavedText(r: SkiaRenderer, canvas: Canvas, node: SceneNode, fill?: Fill): boolean {
-  return canDrawSavedText(node, fill) && drawDerivedText(r, canvas, node)
+  return canDrawSavedText(node, fill) && drawDerivedText(r, canvas, node, fill)
 }
 
 export function renderText(r: SkiaRenderer, canvas: Canvas, node: SceneNode, fill?: Fill): void {
@@ -968,7 +1048,7 @@ export function renderText(r: SkiaRenderer, canvas: Canvas, node: SceneNode, fil
     canvas.restore()
     return
   }
-  if (drawResolvedPathText(r, canvas, node, fontReadiness)) {
+  if (drawResolvedPathText(r, canvas, node, fontReadiness, fill)) {
     canvas.restore()
     return
   }
@@ -982,7 +1062,7 @@ export function renderText(r: SkiaRenderer, canvas: Canvas, node: SceneNode, fil
         return
       }
     }
-    if (drawDerivedText(r, canvas, node)) {
+    if (drawDerivedText(r, canvas, node, fill)) {
       canvas.restore()
       return
     }

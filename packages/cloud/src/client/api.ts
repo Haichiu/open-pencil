@@ -7,10 +7,13 @@ import {
   createInvitationContinuationSchema,
   documentAccessSchema,
   documentDownloadSchema,
+  imageUploadOfferSchema,
+  objectUploadSchema,
   documentGrantSchema,
   documentInvitationSchema,
   documentShareSchema,
   documentSummarySchema,
+  documentVersionDownloadSchema,
   documentVersionResponseSchema,
   documentVersionsSchema,
   restoredDocumentSchema,
@@ -24,7 +27,9 @@ import {
   type CollaborationTicket,
   type CreateInvitationContinuationInput,
   type InvitationContinuation,
-  type CommitUploadInput,
+  type CommitImageUploadsInput,
+  type CommitUploadRequest,
+  type RequestImageUploadsInput,
   type CreateDocumentInput,
   type CreateDocumentInvitationInput,
   type CreateDocumentShareInput,
@@ -35,7 +40,9 @@ import {
   type DocumentInvitation,
   type DocumentShare,
   type DocumentSummary,
+  type ImageUploadOffer,
   type DocumentVersion,
+  type DocumentVersionDownload,
   type DocumentVersions,
   type DuplicateDocumentVersionInput,
   type SaveDocumentVersionInput,
@@ -88,30 +95,9 @@ const sharedDocumentResponseSchema = v.object({
 const userLookupResponseSchema = v.object({ user: v.nullable(cloudUserProfileSchema) })
 const uploadResponseSchema = v.object({
   id: v.pipe(v.string(), v.uuid()),
-  upload: v.variant('kind', [
-    v.object({
-      kind: v.literal('single'),
-      url: v.pipe(v.string(), v.url()),
-      method: v.literal('PUT'),
-      headers: v.record(v.string(), v.string()),
-      expiresAt: v.string()
-    }),
-    v.object({
-      kind: v.literal('multipart'),
-      uploadId: v.string(),
-      partSize: v.pipe(v.number(), v.integer(), v.minValue(1)),
-      parts: v.array(
-        v.object({
-          partNumber: v.pipe(v.number(), v.integer(), v.minValue(1)),
-          url: v.pipe(v.string(), v.url()),
-          method: v.literal('PUT'),
-          headers: v.record(v.string(), v.string())
-        })
-      ),
-      expiresAt: v.string()
-    })
-  ])
+  upload: objectUploadSchema
 })
+const imageUploadsResponseSchema = v.object({ uploads: v.array(imageUploadOfferSchema) })
 
 export type CloudRequestOptions = {
   fetch?: CloudFetch
@@ -442,11 +428,37 @@ export function createCloudAPIClient(baseURL: string, options: CloudRequestOptio
         options.onDiagnostic
       )
     },
-    async commitUpload(uploadId: string, input: CommitUploadInput): Promise<DocumentSummary> {
+    /** Commits the image uploads a save asked for, once their bytes are in place. */
+    async commitImageUploads(
+      documentId: string,
+      uploads: CommitImageUploadsInput['uploads']
+    ): Promise<void> {
+      const response = await client.documents[':documentId'].images.commit.$post({
+        param: { documentId },
+        json: { uploads }
+      })
+      await responseBody(response, options.onDiagnostic)
+    },
+    /** Uploads for the images a save will name that the document's workspace lacks. */
+    async requestImageUploads(
+      documentId: string,
+      input: RequestImageUploadsInput
+    ): Promise<ImageUploadOffer[]> {
+      const response = await parseResponse(
+        client.documents[':documentId'].images.$post({
+          param: { documentId },
+          json: input
+        }),
+        imageUploadsResponseSchema,
+        options.onDiagnostic
+      )
+      return response.uploads
+    },
+    async commitUpload(uploadId: string, input: CommitUploadRequest): Promise<DocumentSummary> {
       const response = await parseResponse(
         client.uploads[':uploadId'].commit.$post({
           param: { uploadId },
-          json: input
+          json: { ...input, images: input.images ?? [] }
         }),
         documentResponseSchema,
         options.onDiagnostic
@@ -493,15 +505,17 @@ export function createCloudAPIClient(baseURL: string, options: CloudRequestOptio
       )
       return response.version
     },
-    async getDocumentVersion(documentId: string, versionId: string): Promise<DocumentDownload> {
-      const response = await parseResponse(
+    async getDocumentVersion(
+      documentId: string,
+      versionId: string
+    ): Promise<DocumentVersionDownload> {
+      return parseResponse(
         client.documents[':documentId'].versions[':versionId'].$get({
           param: { documentId, versionId }
         }),
-        downloadResponseSchema,
+        documentVersionDownloadSchema,
         options.onDiagnostic
       )
-      return response.document
     },
     async restoreDocumentVersion(documentId: string, versionId: string) {
       return parseResponse(

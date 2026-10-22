@@ -3,17 +3,17 @@ import { useObjectUrl } from '@vueuse/core'
 import { computed, ref, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { useCloudMessages, useI18n } from '@open-pencil/vue'
+import { useCloudMessages } from '@open-pencil/vue'
 
 import { openCloudConnect } from '@/app/cloud/connect/flow'
 import { resolveCloudConflict, type CloudConflictChoice } from '@/app/cloud/documents/conflict'
 import { useCloudDocumentStatus } from '@/app/cloud/documents/status'
-import { cloudRoomPermissions } from '@/app/cloud/rooms/live'
+import { cloudRoomPermissions, cloudRoomsRefused, rejoinRefusedRoom } from '@/app/cloud/rooms/live'
 import { showCloudServerOnHome } from '@/app/cloud/servers/store'
 import { cloudConnection } from '@/app/cloud/sessions/connection'
 import { cloudShareOpen } from '@/app/cloud/sharing/dialog'
-import { formatCommentTime, useCommentClock } from '@/app/comments/time'
 import { useEditorStore } from '@/app/editor/active-store'
+import { useDateFormat } from '@/app/i18n/date'
 import { createStorageAdapter } from '@/app/integrations/storage'
 import { openHomeLocation } from '@/app/shell/menu/navigation'
 import { toast } from '@/app/shell/ui'
@@ -26,15 +26,16 @@ import CloudDocumentStatus from './CloudDocumentStatus.vue'
 /** The open document's Cloud status beside its name, and the choice when it conflicts. */
 const store = useEditorStore()
 const router = useRouter()
-const { locale } = useI18n()
 const t = useCloudMessages()
-const now = useCommentClock()
+const dates = useDateFormat()
 const { state, location, meta } = useCloudDocumentStatus(() => store.getStorageBinding())
 
-const ago = (iso: string | null | undefined) =>
-  iso ? formatCommentTime(iso, now.value.getTime(), locale.value) : ''
+const ago = (iso: string | null | undefined) => (iso ? dates.relative(iso) : '')
 const savedAgo = computed(() => ago(meta.value?.lastSyncedAt) || null)
 const viewOnly = computed(() => cloudRoomPermissions.value.get(store) === 'view')
+const notLive = computed(() => cloudRoomsRefused.value.has(store))
+/** Rejoining shows the document as the server holds it, so it waits for this tab's edits. */
+const canRejoin = computed(() => state.value === 'synced' && !store.hasUnsavedChanges())
 /**
  * Saving and saved need nothing from the person, and the tab's dot already shows unsaved edits,
  * so the status shows only for what does: being offline, a failed save, a conflict, view only.
@@ -42,6 +43,7 @@ const viewOnly = computed(() => cloudRoomPermissions.value.get(store) === 'view'
 const needsAttention = computed(
   () =>
     viewOnly.value ||
+    notLive.value ||
     state.value === 'offline' ||
     state.value === 'error' ||
     state.value === 'conflict'
@@ -106,7 +108,10 @@ function retry() {
       :host="location.host"
       :saved-ago="savedAgo"
       :view-only="viewOnly"
+      :not-live="notLive"
+      :can-rejoin="canRejoin"
       @resolve="openConflict"
+      @rejoin="rejoinRefusedRoom(store)"
       @share="cloudShareOpen = true"
       @retry="retry"
       @open-workspace="openWorkspace"

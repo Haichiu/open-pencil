@@ -7,9 +7,10 @@ import type {
   InvitationPreview,
   WorkspaceRole
 } from '#cloud/contract'
+import { cloudInvitationURL } from '#cloud/contract'
 import type { CloudActor } from '#cloud/server/auth'
 import type { CloudDatabase } from '#cloud/server/db'
-import { DocumentNotFoundError } from '#cloud/server/documents/service'
+import { DocumentNotFoundError } from '#cloud/server/documents/errors'
 import type { InvitationDelivery, InvitationOutbox } from '#cloud/server/invitations'
 import type { Kysely } from 'kysely'
 
@@ -146,10 +147,7 @@ export function createInvitationService(
           : null
       const acceptanceURL =
         deliveryContext && options.publicURL && options.appURL
-          ? new URL(
-              `/cloud/invitations/${id}?server=${encodeURIComponent(options.publicURL)}#${token}`,
-              options.appURL
-            ).href
+          ? cloudInvitationURL(options.appURL, options.publicURL, id, token)
           : null
       const message =
         deliveryContext && acceptanceURL

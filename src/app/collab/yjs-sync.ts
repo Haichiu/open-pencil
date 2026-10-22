@@ -1,3 +1,4 @@
+import { isEmptyObject, isEqual, pickBy } from 'es-toolkit'
 import * as Y from 'yjs'
 
 import type { SceneGraph } from '@open-pencil/scene-graph'
@@ -7,6 +8,7 @@ import { decodeNodeFromYjs, syncEncodedNodeToYMap } from '@/app/collab/node-code
 import {
   claimRoot,
   markTreeFormat,
+  readRoot,
   writeOrderKey,
   writePage,
   writeParentEntry,
@@ -20,6 +22,7 @@ import {
   createSharedTree,
   isLocalEditEmpty,
   keepSharedLayers,
+  mergeLocalEdit,
   pageOf,
   recordLocalLayers,
   writeLocalPlacement,
@@ -180,6 +183,8 @@ export function createYjsGraphSync({
 }: YjsGraphSyncOptions) {
   let pendingPageSwitch: { store: EditorStore; pageId: string } | undefined
   let shared: SharedTree | null = null
+  /** Edits made before this peer knew the room's root, which the room did not take. */
+  let heldBack = createLocalEdit()
 
   function sharedTreeOf(ydoc: Y.Doc): SharedTree {
     if (shared?.ydoc !== ydoc) {
@@ -215,6 +220,7 @@ export function createYjsGraphSync({
     const ynodes = getYnodes()
     if (!ydoc || !ynodes) return
     const tree = sharedTreeOf(ydoc)
+    if (tree.rootId === null) mergeLocalEdit(heldBack, edit)
     setSuppressYjsEvents(true)
     try {
       ydoc.transact(() => {
@@ -277,6 +283,7 @@ export function createYjsGraphSync({
         claimRoot(ydoc.getMap('meta'), graph.rootId)
         markTreeFormat(ydoc.getMap('meta'))
       })
+      heldBack = createLocalEdit()
       recordLocalLayers(sharedTreeOf(ydoc), ynodes, ydoc.getMap('meta'), ynodes.keys())
     } catch (error) {
       logCollabSyncError('Failed to sync document', error)
@@ -321,8 +328,14 @@ export function createYjsGraphSync({
   /** Applies a layer's own fields; `applySharedTree` places it in the tree afterwards. */
   function applyYnodeToGraph(graph: SceneGraph, nodeId: string, ynode: Y.Map<unknown>) {
     const props = decodeNodeFromYjs(ynode)
-    if (graph.getNode(nodeId)) {
-      graph.updateNode(nodeId, props)
+    const node = graph.getNode(nodeId)
+    if (node) {
+      // Only what differs: joining a room replays every layer, and a layer that already reads the
+      // same is no change, so it neither marks the document unsaved nor costs a redraw. The text
+      // picture is a cache the decoder clears, so it goes along only with a real change.
+      const { textPicture, ...fields } = props
+      const changes = pickBy(fields, (value, key) => !isEqual(Reflect.get(node, key), value))
+      if (!isEmptyObject(changes)) graph.updateNode(nodeId, { ...changes, textPicture })
       return
     }
     const type = props.type
@@ -348,5 +361,49 @@ export function createYjsGraphSync({
       })
   }
 
-  return { syncNodeToYjs, syncLocalEdit, syncAllNodesToYjs, applyYjsToGraph }
+  /**
+   * Writes the edits made before the room's root was known, once this peer's document follows
+   * that root, as a stored document's tab does: what was drawn while the room loaded joins it.
+   */
+  function syncHeldBackEdits() {
+    const ydoc = getYdoc()
+    const rootId = ydoc ? readRoot(ydoc.getMap('meta')) : undefined
+    if (!ydoc || rootId === undefined || isLocalEditEmpty(heldBack)) return
+    const tree = sharedTreeOf(ydoc)
+    if (tree.rootId === null) tree.setRoot(rootId)
+    const edit = heldBack
+    heldBack = createLocalEdit()
+    syncLocalEdit(edit)
+  }
+
+  /**
+   * Removes the layers under the document's root that the room does not hold. A stored document
+   * opened in several tabs numbers its layers afresh each time, so its copies of layers the room
+   * already has would otherwise sit beside the room's own.
+   */
+  function dropLayersOutsideRoom() {
+    const graph = getStore().graph
+    const ynodes = getYnodes()
+    if (!ynodes) return
+    const outside: string[] = []
+    const visit = (id: string) => {
+      for (const childId of graph.getNode(id)?.childIds ?? []) {
+        if (ynodes.has(childId)) visit(childId)
+        else outside.push(childId)
+      }
+    }
+    visit(graph.rootId)
+    for (const id of outside) graph.deleteNode(id)
+    // The page the tab was on may have been the file's own; it moves to one of the room's.
+    if (outside.length > 0) ensureCurrentPageExists(getStore())
+  }
+
+  return {
+    syncNodeToYjs,
+    syncLocalEdit,
+    syncAllNodesToYjs,
+    applyYjsToGraph,
+    syncHeldBackEdits,
+    dropLayersOutsideRoom
+  }
 }

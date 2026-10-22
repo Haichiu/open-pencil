@@ -2,10 +2,16 @@ import { copyFills, copyStrokes } from '../copy'
 import type { SceneGraph } from '../index'
 import { hasInstanceOverride } from '../instances'
 import type { Color } from '../primitives'
-import type { Fill, SceneNode, Stroke, StyleRun, VariableValue } from '../types'
+import type { Fill, SceneNode, Stroke, StyleRun } from '../types'
 import type { VariableModeFallback } from '../variables'
 import { NUMERIC_FIELDS, isNumericVariableBindingField } from './fields'
-export { isNumericVariableBindingField } from './fields'
+import { variableText, variableTruthy } from './text'
+import { variableValueReferences } from './value'
+export {
+  isNumericVariableBindingField,
+  TEXT_CONTENT_VARIABLE_TYPES,
+  VISIBILITY_VARIABLE_TYPES
+} from './fields'
 
 /** New declarations belong to the outermost occurrence, bounded by a component definition. */
 export function variableBindingOwner(graph: SceneGraph, node: SceneNode): SceneNode {
@@ -58,41 +64,6 @@ export function resolvedNumericBindings(
 }
 
 /**
- * The text a variable bound to text content shows: a string as it is, and a number or boolean
- * as Figma writes it, since Figma lets either be text content.
- */
-export function variableText(value: VariableValue | undefined): string | undefined {
-  if (typeof value === 'string') return value
-  if (typeof value === 'boolean') return String(value)
-  if (typeof value === 'number' && Number.isFinite(value)) return numberText(value)
-  return undefined
-}
-
-const INT32_MIN = -2_147_483_648
-const INT32_MAX = 2_147_483_647
-
-/** How near a whole number a value must be for Figma to write it as one. */
-const WHOLE_NUMBER_TOLERANCE = 1e-6
-
-/**
- * A number as Figma desktop 126 writes it as text: one within a millionth of a whole number as
- * that integer, clamped to 32 bits, and anything else with two decimals, its sign kept and an
- * exact tie rounded to even, as C's `%.2f` does (0.125 is "0.12", 0.999 is "1.00", -0.004 is
- * "-0.00").
- */
-function numberText(value: number): string {
-  const whole = Math.round(value)
-  if (Math.abs(value - whole) < WHOLE_NUMBER_TOLERANCE)
-    return String(Math.min(INT32_MAX, Math.max(INT32_MIN, whole)) || 0)
-  const scaled = Math.abs(value) * 100
-  const floor = Math.floor(scaled)
-  const tie = scaled - floor === 0.5
-  const cents = tie ? floor + (floor % 2) : Math.round(scaled)
-  const sign = value < 0 ? '-' : ''
-  return `${sign}${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`
-}
-
-/**
  * The text and visibility a node's string and boolean bindings resolve to in its mode, for the
  * fields whose stored value differs. Text or visibility an instance overrides, which typing in a
  * layer or toggling its eye records, keeps its own value, as an overridden width or height does.
@@ -112,8 +83,9 @@ export function resolvedValueBindings(
   }
   const text = node.type === 'TEXT' ? variableText(resolve('text')) : undefined
   if (text !== undefined && text !== node.text) updates.text = text
-  const visible = resolve('visible')
-  if (typeof visible === 'boolean' && visible !== node.visible) updates.visible = visible
+  // Figma binds visibility to text too, and shows the layer when the text reads as true.
+  const visible = variableTruthy(resolve('visible'))
+  if (visible !== undefined && visible !== node.visible) updates.visible = visible
   return updates
 }
 
@@ -205,8 +177,8 @@ export function variablesResolvingThrough(graph: SceneGraph, ids: Iterable<strin
     grew = false
     for (const variable of graph.variables.values()) {
       if (found.has(variable.id)) continue
-      const aliases = Object.values(variable.valuesByMode).some(
-        (value) => typeof value === 'object' && 'aliasId' in value && found.has(value.aliasId)
+      const aliases = Object.values(variable.valuesByMode).some((value) =>
+        variableValueReferences(value).some((id) => found.has(id))
       )
       if (aliases) {
         found.add(variable.id)
@@ -243,9 +215,8 @@ export function collectionsBoundIn(graph: SceneGraph, roots: Iterable<string>): 
     const variable = graph.variables.get(id)
     if (!variable) continue
     collections.add(variable.collectionId)
-    for (const value of Object.values(variable.valuesByMode)) {
-      if (typeof value === 'object' && 'aliasId' in value) pending.push(value.aliasId)
-    }
+    for (const value of Object.values(variable.valuesByMode))
+      pending.push(...variableValueReferences(value))
   }
   return collections
 }

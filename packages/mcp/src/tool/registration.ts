@@ -1,7 +1,12 @@
 import { Buffer } from 'node:buffer'
 import { resolve } from 'node:path'
 
-import type { McpServer, ToolCallback, ToolAnnotations } from '@modelcontextprotocol/server'
+import type {
+  McpServer,
+  ToolCallback,
+  ToolAnnotations,
+  ServerContext
+} from '@modelcontextprotocol/server'
 // eslint-disable-next-line open-pencil/no-mixed-case-acronym-identifiers -- Upstream export spelling.
 import { toStandardJsonSchema as toStandardJSONSchema } from '@valibot/to-json-schema'
 import * as v from 'valibot'
@@ -12,11 +17,12 @@ import type { RPCJSONObject } from '#mcp/json'
 import { MAX_RESULT_BYTES, fail, ok, resultTooLargeMessage } from '#mcp/result'
 import { createToolDescriptors, getMCPToolDefinitions } from '#mcp/tool/manifest'
 import type { ToolDescriptor, ToolEffect, ToolPolicy } from '#mcp/tool/metadata'
-import { resolveSafePath, writeToolOutput } from '#mcp/tool/output'
+import { resolveSafePath, writeToolOutput, writesFileOutput } from '#mcp/tool/output'
 import { isToolEnabled } from '#mcp/tool/policy'
 import { SELECTION_SCOPE_FILE_OUTPUT_ERROR } from '#mcp/tool/scope'
 
 export type RPCSender = (body: Record<string, unknown>) => Promise<unknown>
+export type MCPToolSettled = (context: ServerContext) => Promise<void>
 
 const automationTargetSchema = {
   document_id: v.optional(
@@ -39,6 +45,11 @@ function splitAutomationTarget(args: Record<string, unknown>): {
 }
 
 type RPCResponse = { ok?: boolean; result?: unknown; target?: unknown; error?: string }
+
+/** The app's recent files; the server keeps only those `open_file` could reach. */
+const RecentFilesResult = v.object({
+  files: v.array(v.object({ path: v.string(), name: v.string(), updated_at: v.string() }))
+})
 
 async function sendCommand(
   sendRPC: RPCSender,
@@ -69,6 +80,8 @@ export interface RegisterToolsOptions {
   mcpRoot?: string | null
   sendRPC: RPCSender
   agentSession?: MCPAgentSession
+  /** Transport lifecycle cleanup after tool execution, including cancellation. */
+  onToolSettled?: MCPToolSettled
 }
 
 function toolAnnotations(effect: ToolEffect): ToolAnnotations {
@@ -111,7 +124,13 @@ export function registerTools(mcpServer: McpServer, options: RegisterToolsOption
         annotations: toolAnnotations(descriptor.effect),
         _meta: { 'openpencil/capabilities': descriptor.capabilities }
       },
-      handler
+      async (args, context) => {
+        try {
+          return await handler(args, context)
+        } finally {
+          await options.onToolSettled?.(context)
+        }
+      }
     )
   }
 
@@ -125,7 +144,9 @@ export function registerTools(mcpServer: McpServer, options: RegisterToolsOption
       async (args: Record<string, unknown>) => {
         try {
           const { target, args: toolArgs } = splitAutomationTarget(args)
-          if (policy.scope === 'selection' && toolArgs.path !== undefined) {
+          const filePath =
+            writesFileOutput(def.name) && typeof toolArgs.path === 'string' ? toolArgs.path : null
+          if (policy.scope === 'selection' && filePath !== null) {
             return fail(new Error(SELECTION_SCOPE_FILE_OUTPUT_ERROR))
           }
           const result = await sendRPC({
@@ -142,12 +163,17 @@ export function registerTools(mcpServer: McpServer, options: RegisterToolsOption
           const res = result as { ok?: boolean; result?: unknown; error?: string }
           if (res.ok === false) return fail(new Error(res.error))
           const r = res.result as RPCJSONObject | undefined
-          const filePath = typeof toolArgs.path === 'string' ? toolArgs.path : null
           if (r && filePath && resolvedRoot) {
             const written = await writeToolOutput(def.name, r, filePath, resolvedRoot)
             if (written) return written
           }
-          if (r && 'base64' in r && 'mimeType' in r) {
+          // Only an image goes back as one; a PDF stays base64 in the JSON result, as described.
+          if (
+            r &&
+            'base64' in r &&
+            typeof r.mimeType === 'string' &&
+            r.mimeType.startsWith('image/')
+          ) {
             const base64 = String(r.base64)
             const bytes = Buffer.byteLength(base64, 'utf8')
             if (bytes > MAX_RESULT_BYTES) {
@@ -166,7 +192,7 @@ export function registerTools(mcpServer: McpServer, options: RegisterToolsOption
                 {
                   type: 'image' as const,
                   data: base64,
-                  mimeType: r.mimeType as string
+                  mimeType: r.mimeType
                 }
               ]
             }
@@ -272,6 +298,24 @@ export function registerTools(mcpServer: McpServer, options: RegisterToolsOption
         }
       }
     )
+
+    register('list_recent_files', { inputSchema: v.strictObject({}) }, async () => {
+      try {
+        const res = await sendCommand(sendRPC, 'list_recent_files', {})
+        const { files } = v.parse(RecentFilesResult, res.result)
+        const insideRoot = await Promise.all(
+          files.map((file) =>
+            resolveSafePath(file.path, resolvedRoot).then(
+              () => true,
+              () => false
+            )
+          )
+        )
+        return ok({ files: files.filter((_, index) => insideRoot[index]) })
+      } catch (e) {
+        return fail(e)
+      }
+    })
 
     register(
       'new_document',

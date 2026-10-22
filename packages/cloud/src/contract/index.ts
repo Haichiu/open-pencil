@@ -1,4 +1,37 @@
 export * from './account'
+export {
+  AI_ERROR_STATUS,
+  aiCatalogSchema,
+  aiCreditBucketSchema,
+  aiErrorCodeSchema,
+  aiErrorSchema,
+  aiModelSchema,
+  aiTokenClaimsSchema,
+  aiTokenSchema,
+  aiUsageEntrySchema,
+  aiUsagePageSchema,
+  aiWalletSchema,
+  CLOUD_AI_CONTRACT_VERSION,
+  CLOUD_AI_JWKS_PATH,
+  CLOUD_AI_TOKEN_AUDIENCE,
+  cloudAIDiscoverySchema,
+  cloudBillingDiscoverySchema,
+  createAITokenSchema,
+  parseCreateAIToken,
+  type AICatalog,
+  type AICreditBucket,
+  type AIError,
+  type AIErrorCode,
+  type AIModel,
+  type AIToken,
+  type AITokenClaims,
+  type AIUsageEntry,
+  type AIUsagePage,
+  type AIWallet,
+  type CloudAIDiscovery,
+  type CloudBillingDiscovery,
+  type CreateAITokenInput
+} from './ai'
 export * from './admin'
 export {
   collaborationPrincipalSchema,
@@ -25,33 +58,48 @@ export {
   type CloudListing
 } from './discovery'
 export {
+  CLOUD_IMAGE_NAME_PATTERN,
+  CLOUD_MAX_DOCUMENT_IMAGES,
   CLOUD_PROTOCOL_MAX_UPLOAD_BYTES,
   cloudActorSchema,
   cloudSessionSchema,
+  commitImageUploadsSchema,
   commitUploadSchema,
   createDocumentSchema,
   createUploadSchema,
   documentAccessSchema,
   documentAccessSourceSchema,
   documentDownloadSchema,
+  documentImageDownloadSchema,
   documentPermissionSchema,
+  imageUploadOfferSchema,
+  objectUploadSchema,
   documentSummarySchema,
   sharedDocumentSchema,
   type SharedDocument,
   workspaceUsageSchema,
+  parseCommitImageUploads,
   parseCommitUpload,
   parseCreateDocument,
   parseCreateUpload,
+  parseRequestImageUploads,
+  requestImageUploadsSchema,
   type CloudActorContract,
   type CloudSession,
+  type CommitImageUploadsInput,
   type CommitUploadInput,
+  type CommitUploadRequest,
   type CreateDocumentInput,
   type CreateUploadInput,
   type DocumentAccess,
   type DocumentAccessSource,
   type DocumentDownload,
+  type DocumentImageDownload,
   type DocumentPermission,
   type DocumentSummary,
+  type ImageUploadOffer,
+  type ObjectUploadTarget,
+  type RequestImageUploadsInput,
   type WorkspaceUsage
 } from './documents'
 export {
@@ -124,5 +172,13 @@ export {
   type WorkspaceRole,
   type WorkspaceSummary
 } from './workspaces'
+export {
+  cloudDesktopLinkURL,
+  cloudDocumentPath,
+  cloudDocumentURL,
+  cloudInvitationURL,
+  cloudShareURL,
+  type CloudLinkKind
+} from './links'
 export { CLOUD_PORTAL_PAGE_ROOTS, isCloudPortalPage } from './portal'
 export * from './versions'

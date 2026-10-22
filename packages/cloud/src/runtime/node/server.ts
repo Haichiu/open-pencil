@@ -4,6 +4,7 @@ import { createS3ObjectStore } from '#cloud/runtime/s3/objects'
 import {
   CLOUD_FEATURE_KEYS,
   createCloudApp,
+  loadAISigningKey,
   createCloudAuthenticationRuntime,
   createCollaborationRelay,
   createCollaborationStateStore,
@@ -35,6 +36,11 @@ export type NodeCloudServerOptions = {
 export async function startNodeCloudServer(options: NodeCloudServerOptions = {}) {
   const environment = options.environment ?? process.env
   const { config, database } = await createMigratedNodeCloudDatabase(environment)
+  // Before any worker starts, so a key that cannot sign leaves nothing running.
+  const aiSigningKey = await loadAISigningKey(config).catch(async (error: unknown) => {
+    await database.destroy()
+    throw error
+  })
   const objects = createS3ObjectStore(config)
   const {
     email,
@@ -69,16 +75,6 @@ export async function startNodeCloudServer(options: NodeCloudServerOptions = {})
         }
       )
     : undefined
-  const app = createCloudApp({
-    config,
-    database,
-    auth,
-    objects,
-    invitationOutbox,
-    transactionalEmail: email,
-    enrollment,
-    relayURL: config.relayURL ?? defaultRelayURL(config.publicURL)
-  })
   const relay = createCollaborationRelay({
     authSecret: config.authSecret,
     store: createCollaborationStateStore(database),
@@ -98,7 +94,28 @@ export async function startNodeCloudServer(options: NodeCloudServerOptions = {})
         deploymentMode: config.deployment
       })
       return limit < 0 ? null : limit
+    },
+    async currentRoomEpoch(documentId) {
+      const document = await database
+        .selectFrom('document')
+        .select('collaborationEpoch')
+        .where('id', '=', documentId)
+        .executeTakeFirst()
+      return document?.collaborationEpoch ?? null
     }
+  })
+  const app = createCloudApp({
+    config,
+    database,
+    auth,
+    objects,
+    invitationOutbox,
+    transactionalEmail: email,
+    enrollment,
+    aiSigningKey,
+    relayURL: config.relayURL ?? defaultRelayURL(config.publicURL),
+    onDocumentRestored: (documentId) => relay.startOver(documentId),
+    onDocumentVersionsChanged: (documentId) => relay.announceVersions(documentId)
   })
   const emailWorker = emailTransport
     ? startTransactionalEmailWorker(email, {
