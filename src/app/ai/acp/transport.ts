@@ -9,7 +9,7 @@ import type {
 import { promiseTimeout } from '@vueuse/core'
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 
-import type { ACPAgentDef } from '@open-pencil/core/constants'
+import { OPEN_PENCIL_MCP_SERVER, type ACPAgentDef } from '@open-pencil/core/constants'
 import { randomHex } from '@open-pencil/scene-graph/random'
 
 import SYSTEM_PROMPT from '@/app/ai/chat/system-prompt'
@@ -17,7 +17,7 @@ import { describeDiagnosticError, recordACPTransportFailure } from '@/app/diagno
 import { buildACPMCPServers } from '@/app/integrations/mcp'
 
 import { parseAuthStatusUpdate } from './auth/status'
-import { mapUpdate, textFromContent } from './map-update'
+import { createUpdateMapper, textFromContent } from './map-update'
 import { spawnACPProcess } from './process'
 
 type TauriChild = Awaited<ReturnType<typeof spawnACPProcess>>['child']
@@ -142,15 +142,14 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
 
     return new ReadableStream<UIMessageChunk>({
       start: (controller) => {
-        const textId = `text-${Date.now()}`
-        let textStarted = false
+        const mapper = createUpdateMapper(`turn-${Date.now()}`)
         let closed = false
 
         function finish(reason: 'stop' | 'other' | 'error', errorText?: string) {
           if (closed) return
           closed = true
           if (errorText) controller.enqueue({ type: 'error', errorText })
-          if (textStarted) controller.enqueue({ type: 'text-end', id: textId })
+          for (const chunk of mapper.end()) controller.enqueue(chunk)
           controller.enqueue({ type: 'finish-step' })
           controller.enqueue({ type: 'finish', finishReason: reason })
           session.onUpdate = null
@@ -159,11 +158,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
 
         session.onUpdate = (params) => {
           if (closed) return
-          const result = mapUpdate(params.update, textId, textStarted)
-          for (const chunk of result.chunks) {
-            controller.enqueue(chunk)
-          }
-          textStarted = result.textStarted
+          for (const chunk of mapper.map(params.update)) controller.enqueue(chunk)
         }
 
         abortSignal?.addEventListener('abort', () => {
@@ -277,7 +272,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     onUpdate = ({ update }) => {
       if (update.sessionUpdate !== 'tool_call' || update.status !== 'failed') return
       const text = textFromContent(update.content ?? undefined)
-      if (text?.includes('open-pencil')) startupFailures.push(text)
+      if (text?.includes(OPEN_PENCIL_MCP_SERVER)) startupFailures.push(text)
     }
 
     let sessionResult
