@@ -165,6 +165,8 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
             sessionId,
             prompt: [{ type: 'text', text: promptText }]
           })
+          // The prompt answers once the agent's turn is over; nothing else ends the reply.
+          .then((result) => finish(result.stopReason === 'end_turn' ? 'stop' : 'other'))
           .catch((e) => {
             recordACPTransportFailure({
               operation: 'message',

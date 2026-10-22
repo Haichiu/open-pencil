@@ -53,39 +53,54 @@ export function mapUpdate(update: SessionUpdate, textId: string, textStarted: bo
         providerExecuted: true,
         title: update.title
       })
-      if (update.rawInput) {
+      // A call can arrive already finished, as Codex reports an MCP server that failed to start.
+      const finished = update.status === 'completed' || update.status === 'failed'
+      if (update.rawInput || finished) {
         chunks.push({
           type: 'tool-input-available',
           toolCallId: update.toolCallId,
           toolName,
-          input: update.rawInput,
+          input: update.rawInput ?? {},
           providerExecuted: true,
           title: update.title
         })
       }
+      chunks.push(...toolResultChunks(update))
       break
     }
     case 'tool_call_update': {
-      if (update.status === 'completed') {
-        chunks.push({
-          type: 'tool-output-available',
-          toolCallId: update.toolCallId,
-          output: update.rawOutput ?? textFromContent(update.content ?? undefined),
-          providerExecuted: true
-        })
-      } else if (update.status === 'failed') {
-        chunks.push({
-          type: 'tool-output-error',
-          toolCallId: update.toolCallId,
-          errorText: textFromContent(update.content ?? undefined) ?? 'Tool call failed',
-          providerExecuted: true
-        })
-      }
+      chunks.push(...toolResultChunks(update))
       break
     }
   }
 
   return { chunks, textStarted }
+}
+
+type ToolCallReport = Extract<SessionUpdate, { sessionUpdate: 'tool_call' | 'tool_call_update' }>
+
+function toolResultChunks(update: ToolCallReport): UIMessageChunk[] {
+  if (update.status === 'completed') {
+    return [
+      {
+        type: 'tool-output-available',
+        toolCallId: update.toolCallId,
+        output: update.rawOutput ?? textFromContent(update.content ?? undefined),
+        providerExecuted: true
+      }
+    ]
+  }
+  if (update.status === 'failed') {
+    return [
+      {
+        type: 'tool-output-error',
+        toolCallId: update.toolCallId,
+        errorText: textFromContent(update.content ?? undefined) ?? 'Tool call failed',
+        providerExecuted: true
+      }
+    ]
+  }
+  return []
 }
 
 export function textFromContent(content: JSONObject[] | undefined): string | undefined {

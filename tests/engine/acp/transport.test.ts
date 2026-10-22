@@ -148,6 +148,24 @@ describe('mapUpdate', () => {
     ])
   })
 
+  test('a tool_call that arrives already failed ends with its error', () => {
+    const update: SessionUpdate = {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'mcp_startup.open-pencil',
+      title: 'mcp__open-pencil__startup',
+      kind: 'other',
+      status: 'failed',
+      content: [{ type: 'content', content: { type: 'text', text: 'failed to start' } }]
+    }
+    const result = mapUpdate(update, TEXT_ID, false)
+    expect(result.chunks.map((chunk) => chunk.type)).toEqual([
+      'tool-input-start',
+      'tool-input-available',
+      'tool-output-error'
+    ])
+    expect(result.chunks[2]).toMatchObject({ errorText: 'failed to start' })
+  })
+
   test('agent_message_chunk with non-text content produces no chunks', () => {
     const update: SessionUpdate = {
       sessionUpdate: 'agent_message_chunk',
