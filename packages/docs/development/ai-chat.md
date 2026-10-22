@@ -44,6 +44,10 @@ Diagnostics record `chat.completed`, `chat.stopped`, or `chat.failed`.
 
 `submission/undone.ts` records the reply's turn (`turns.ts`) once the run settles, so an edit landing after Stop belongs to the reply.
 
+## An ACP reply
+
+An ACP agent calls OpenPencil's tools through the MCP server rather than `executeCall`, but its replies keep their edits the same way. The ACP transport (`acp/transport.ts`) starts a run for each reply with `startAgentRun`, without the built-in chat's agent presence, since the agent shows through its MCP session, and ends it however the reply ends. Each MCP tool call carries the chat id from the agent's `x-openpencil-chat` header and the call's id in the agent's conversation, which Codex sends as `_meta.callId` and Claude Code as `_meta["claudecode/toolUseId"]`. While the reply goes on, a call that edits the chat's own document pushes its undo step under `aiUndoLabel(tool)` and records it on the run (`automation/bridge/tool-handlers.ts`), so Revert, Restore, and the undone marks work as for a provider model.
+
 ## Undo and the model
 
 A turn keeps the reply's calls and their undo entries. On every undo history change, each turn works out which of its calls are undone with `UndoManager.stateOf`: an entry on the redo stack is undone, one on the undo stack applied. An entry that left the history keeps its last state; undone and then cleared from Redo by a new edit, it stays undone. Changes are written to the reply's metadata, and the transcript reads only the metadata.

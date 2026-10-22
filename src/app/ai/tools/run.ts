@@ -99,6 +99,35 @@ export function startRun(store: EditorStore, maxSteps: number, model?: string): 
   return state.run
 }
 
+/** Each ACP chat's document, by the chat id its agent's MCP session carries. */
+const agentChats = new Map<string, EditorStore>()
+
+/**
+ * Begin a run for an ACP chat's reply. Its agent shows through its MCP session instead of as
+ * the built-in chat, and its tool calls find the run by `chat` (`agentReplyRun`).
+ */
+export function startAgentRun(store: EditorStore, chat: string): Run {
+  const state = getRunState(store)
+  state.run = new Run(DEFAULT_AGENT_STEPS, store.state.currentPageId)
+  agentChats.set(chat, store)
+  return state.run
+}
+
+/** The ACP chat is gone, so a late call from its agent belongs to no reply. */
+export function forgetAgentChat(chat: string): void {
+  agentChats.delete(chat)
+}
+
+/**
+ * The reply an ACP agent's tool call belongs to: its chat's run while the reply goes on, when
+ * the call edits the chat's own document. A call elsewhere stays an ordinary agent edit.
+ */
+export function agentReplyRun(store: EditorStore, chat: string | undefined): Run | null {
+  if (!chat || agentChats.get(chat) !== store) return null
+  const run = currentRun(store)
+  return run.active ? run : null
+}
+
 /**
  * The reply finished, failed, or was stopped: the agent stays listed but leaves the canvas.
  * Only the first call counts, and a later run is not ended by an earlier one's late call.

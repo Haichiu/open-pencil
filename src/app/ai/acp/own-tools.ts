@@ -26,6 +26,8 @@ export type OwnToolsOutcome =
 
 /** What an agent's new session needs to reach OpenPencil's tools, and how to tell it did. */
 export interface OwnToolsLink {
+  /** The id the agent's MCP session and tool calls carry, which ties them to this chat. */
+  chat: string
   mcpServers: McpServer[]
   meta: typeof OWN_TOOLS_ALLOWED
   /** Reads an update sent before any prompt, where a failed tool call is a server that failed. */
@@ -52,6 +54,7 @@ export async function linkOwnTools(authorizationToken: string | null): Promise<O
   const watch = mcpRuntime.agentSessionEvents ? watchChatAgent(chat) : null
   const failures: string[] = []
   return {
+    chat,
     mcpServers,
     meta: OWN_TOOLS_ALLOWED,
     noteUpdate(update) {

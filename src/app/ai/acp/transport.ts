@@ -11,7 +11,9 @@ import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 import type { ACPAgentDef } from '@open-pencil/core/constants'
 
 import SYSTEM_PROMPT from '@/app/ai/chat/system-prompt'
+import { endRun, forgetAgentChat, startAgentRun } from '@/app/ai/tools/run'
 import { describeDiagnosticError, recordACPTransportFailure } from '@/app/diagnostics'
+import type { EditorStore } from '@/app/editor/active-store'
 
 import { parseAuthStatusUpdate } from './auth/status'
 import { createUpdateMapper } from './map-update'
@@ -23,6 +25,8 @@ type TauriChild = Awaited<ReturnType<typeof spawnACPProcess>>['child']
 interface ACPSession {
   connection: ClientSideConnection
   sessionId: string
+  /** The id the agent's tool calls carry, which ties them to this chat's replies. */
+  chat: string
   child: TauriChild
   onUpdate: ((params: SessionNotification) => void) | null
   dead: boolean
@@ -101,9 +105,13 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
   private sentContext = false
   private destroying = false
 
-  constructor(options: { agentDef: ACPAgentDef; cwd?: string }) {
+  /** The chat's document, where each reply's run records the edits the agent makes in it. */
+  private store: EditorStore | null
+
+  constructor(options: { agentDef: ACPAgentDef; cwd?: string; store?: EditorStore }) {
     this.agentDef = options.agentDef
     this.cwd = options.cwd ?? '.'
+    this.store = options.store ?? null
   }
 
   async sendMessages({
@@ -138,10 +146,14 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
       start: (controller) => {
         const mapper = createUpdateMapper(`turn-${Date.now()}`)
         let closed = false
+        // The reply's run collects the edits the agent's calls make in the chat's document.
+        const store = this.store
+        const run = store ? startAgentRun(store, session.chat) : null
 
         function finish(reason: 'stop' | 'other' | 'error', errorText?: string) {
           if (closed) return
           closed = true
+          if (store && run) endRun(store, run)
           if (errorText) controller.enqueue({ type: 'error', errorText })
           for (const chunk of mapper.end()) controller.enqueue(chunk)
           controller.enqueue({ type: 'finish-step' })
@@ -188,6 +200,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
   async destroy(): Promise<void> {
     this.destroying = true
     if (this.session) {
+      forgetAgentChat(this.session.chat)
       await this.session.child.kill()
       this.session = null
     }
@@ -291,6 +304,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     const session: ACPSession = {
       connection,
       sessionId: sessionResult.sessionId,
+      chat: tools.chat,
       child,
       dead: false,
       get onUpdate() {

@@ -183,6 +183,7 @@ function toolsProbe(outcome: OwnToolsOutcome) {
     link: async () => {
       linked.push('link')
       return {
+        chat: '0123456789abcdef',
         mcpServers: [
           { type: 'http', name: 'open-pencil', url: 'http://127.0.0.1:7600/mcp', headers: [] }
         ],

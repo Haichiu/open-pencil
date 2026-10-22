@@ -106,7 +106,7 @@ function callSettings(
   return { reasoning, providerOptions: mergeProviderOptions(cacheOptions, providerOptions) }
 }
 
-export async function createACPTransport(providerID: AIProviderID) {
+export async function createACPTransport(providerID: AIProviderID, store?: EditorStore) {
   const agentId = providerID.replace('acp:', '') as ACPAgentID
   const agentDef = ACP_AGENTS.find((a) => a.id === agentId)
   if (!agentDef) throw new Error(`Unknown ACP agent: ${agentId}`)
@@ -114,7 +114,7 @@ export async function createACPTransport(providerID: AIProviderID) {
   const { ACPChatTransport } = await import('@/app/ai/acp/transport')
   const { agentWorkspace } = await import('@/app/ai/agents/native')
   // A folder of its own, not the home folder, whose project settings the agent would read.
-  return new ACPChatTransport({ agentDef, cwd: await agentWorkspace() })
+  return new ACPChatTransport({ agentDef, cwd: await agentWorkspace(), store })
 }
 
 export function createToolLoopTransport({
@@ -330,10 +330,10 @@ export function createChatSessionManager({
     if (errors.length) throw new AggregateError(errors, 'Agent transport teardown failed')
   }
 
-  async function createActiveACPTransport() {
+  async function createActiveACPTransport(store: EditorStore) {
     await destroyAgentTransports()
     await assertAgentReady('acp')
-    const transport = await createACPTransport(providerID.value)
+    const transport = await createACPTransport(providerID.value, store)
     acpTransportInstance = transport
     return transport as ChatTransport<UIMessage>
   }
@@ -428,7 +428,7 @@ export function createChatSessionManager({
       let agentKind: 'acp' | 'harness' | null = null
       if (isACPProvider.value) {
         agentKind = 'acp'
-        transport = await createActiveACPTransport()
+        transport = await createActiveACPTransport(store)
       } else if (isHarnessProvider.value) {
         agentKind = 'harness'
         transport = await createActiveHarnessTransport(sessionId)
