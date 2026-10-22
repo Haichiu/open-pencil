@@ -146,7 +146,7 @@ function agentState(): string {
     <AppAlert
       v-if="view.adapterMismatch"
       tone="warning"
-      :heading="ai.aiSetupAgentAdapterMismatch({ command: agent.command })"
+      :heading="ai.aiSetupAgentAdapterMismatch({ path: detected?.adapterPath ?? agent.command })"
     />
     <AppAlert v-if="problemMessage" tone="warning" :heading="problemMessage">
       <template v-if="view.problem === 'needs-npm'" #actions>
@@ -186,7 +186,8 @@ function agentState(): string {
     <AppButton
       v-if="setup.supported"
       size="xs"
-      :disabled="view.busy || setup.scanning"
+      :disabled="view.busy"
+      :loading="setup.scanning || setup.account?.checking"
       @click="emit('check')"
     >
       {{ ai.aiSetupAgentCheckAgain }}

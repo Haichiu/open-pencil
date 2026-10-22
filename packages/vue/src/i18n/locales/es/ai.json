@@ -285,7 +285,7 @@
   "aiSetupAgentSignInCode": "Código de la página de inicio de sesión, si muestra uno",
   "aiSetupAgentSignInSubmitCode": "Enviar código",
   "aiSetupAgentSignInFailed": "No se pudo iniciar sesión en {agent}. Inténtalo de nuevo.",
-  "aiSetupAgentAdapterMismatch": "El {command} de este equipo es otro adaptador, que OpenPencil no admite. Instala el compatible y elimina el otro o ponlo más atrás en tu PATH.",
+  "aiSetupAgentAdapterMismatch": "OpenPencil encontró {path}, otro adaptador que no admite. Instala el compatible y elimina este o ponlo más atrás en tu PATH.",
   "aiSetupPiDescription": "OpenPencil ejecuta Pi mediante su complemento Harness y usa los proveedores en los que iniciaste sesión en Pi.",
   "aiSetupPiCompanion": "Complemento Harness",
   "aiSetupPiInstallCompanion": "Instalar complemento",

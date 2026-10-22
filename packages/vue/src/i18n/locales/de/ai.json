@@ -285,7 +285,7 @@
   "aiSetupAgentSignInCode": "Code von der Anmeldeseite, falls sie einen zeigt",
   "aiSetupAgentSignInSubmitCode": "Code senden",
   "aiSetupAgentSignInFailed": "Anmeldung bei {agent} fehlgeschlagen. Versuche es erneut.",
-  "aiSetupAgentAdapterMismatch": "Das {command} auf diesem Computer ist ein anderer Adapter, den OpenPencil nicht unterstützt. Installiere den unterstützten und entferne den anderen oder setze ihn in deinem PATH weiter nach hinten.",
+  "aiSetupAgentAdapterMismatch": "OpenPencil hat {path} gefunden, einen anderen Adapter, den es nicht unterstützt. Installiere den unterstützten und entferne diesen oder setze ihn in deinem PATH weiter nach hinten.",
   "aiSetupPiDescription": "OpenPencil führt Pi über seinen Harness-Begleiter aus und nutzt die Anbieter, bei denen du dich in Pi angemeldet hast.",
   "aiSetupPiCompanion": "Harness-Begleiter",
   "aiSetupPiInstallCompanion": "Begleiter installieren",

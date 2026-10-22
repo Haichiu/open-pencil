@@ -285,7 +285,7 @@
   "aiSetupAgentSignInCode": "Code de la page de connexion, si elle en affiche un",
   "aiSetupAgentSignInSubmitCode": "Envoyer le code",
   "aiSetupAgentSignInFailed": "Impossible de se connecter à {agent}. Réessayez.",
-  "aiSetupAgentAdapterMismatch": "Le {command} de cet ordinateur est un autre adaptateur, qu’OpenPencil ne prend pas en charge. Installez celui qui est pris en charge, puis supprimez l’autre ou placez-le plus loin dans votre PATH.",
+  "aiSetupAgentAdapterMismatch": "OpenPencil a trouvé {path}, un autre adaptateur qu’il ne prend pas en charge. Installez celui qui est pris en charge, puis supprimez celui-ci ou placez-le plus loin dans votre PATH.",
   "aiSetupPiDescription": "OpenPencil exécute Pi via son compagnon Harness et utilise les fournisseurs auxquels vous êtes connecté dans Pi.",
   "aiSetupPiCompanion": "Compagnon Harness",
   "aiSetupPiInstallCompanion": "Installer le compagnon",

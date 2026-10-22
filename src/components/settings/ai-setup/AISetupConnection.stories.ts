@@ -266,14 +266,16 @@ export const CodingAgentOtherAdapter: Story = {
     providerID: 'acp:codex',
     recommended: false,
     agentSetup: agentSetup({
-      detected: detected('codex', 'available'),
+      detected: { ...detected('codex', 'available'), adapterPath: '/Users/ada/.bun/bin/codex-acp' },
       bridge: true,
       account: account({ status: null, adapter: { name: 'codex-acp', version: '0.10.0' } })
     })
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await expect(canvas.getByText(/is another adapter/)).toBeVisible()
+    await expect(
+      canvas.getByText(/found \/Users\/ada\/\.bun\/bin\/codex-acp, another adapter/)
+    ).toBeVisible()
     await expect(canvas.getByText('npm i -g @agentclientprotocol/codex-acp')).toBeVisible()
     await expect(canvas.queryByText(/Account/)).toBeNull()
   }

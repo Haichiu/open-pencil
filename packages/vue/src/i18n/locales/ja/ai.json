@@ -285,7 +285,7 @@
   "aiSetupAgentSignInCode": "サインインページに表示されたコード（表示された場合）",
   "aiSetupAgentSignInSubmitCode": "コードを送信",
   "aiSetupAgentSignInFailed": "{agent} にサインインできませんでした。もう一度お試しください。",
-  "aiSetupAgentAdapterMismatch": "このコンピューターの {command} は OpenPencil が対応していない別のアダプターです。対応版をインストールし、もう一方を削除するか PATH の後ろに移してください。",
+  "aiSetupAgentAdapterMismatch": "OpenPencil が見つけた {path} は、対応していない別のアダプターです。対応版をインストールし、これを削除するか PATH の後ろに移してください。",
   "aiSetupPiDescription": "OpenPencil は Harness コンパニオンを通じて Pi を実行し、Pi でサインインしたプロバイダーを使います。",
   "aiSetupPiCompanion": "Harness コンパニオン",
   "aiSetupPiInstallCompanion": "コンパニオンをインストール",

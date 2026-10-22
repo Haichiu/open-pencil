@@ -285,7 +285,7 @@
   "aiSetupAgentSignInCode": "Kod ze strony logowania, jeśli go wyświetla",
   "aiSetupAgentSignInSubmitCode": "Wyślij kod",
   "aiSetupAgentSignInFailed": "Nie udało się zalogować do {agent}. Spróbuj ponownie.",
-  "aiSetupAgentAdapterMismatch": "{command} na tym komputerze to inny adapter, którego OpenPencil nie obsługuje. Zainstaluj obsługiwany, a drugi usuń lub przesuń dalej w PATH.",
+  "aiSetupAgentAdapterMismatch": "OpenPencil znalazł {path}, inny adapter, którego nie obsługuje. Zainstaluj obsługiwany, a ten usuń lub przesuń dalej w PATH.",
   "aiSetupPiDescription": "OpenPencil uruchamia Pi przez towarzyszący program Harness i korzysta z dostawców, do których zalogowano się w Pi.",
   "aiSetupPiCompanion": "Program towarzyszący Harness",
   "aiSetupPiInstallCompanion": "Zainstaluj program towarzyszący",

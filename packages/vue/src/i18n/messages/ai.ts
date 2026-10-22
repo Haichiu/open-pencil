@@ -302,7 +302,7 @@ export const aiMessageDefaults = {
   aiSetupAgentSignInSubmitCode: 'Submit code',
   aiSetupAgentSignInFailed: params('Couldn’t sign in to {agent}. Try again.'),
   aiSetupAgentAdapterMismatch: params(
-    'The {command} on this computer is another adapter, which OpenPencil doesn’t support. Install the supported one, and remove the other or put it later on your PATH.'
+    'OpenPencil found {path}, another adapter it doesn’t support. Install the supported one, then remove this one or move it later on your PATH.'
   ),
   aiSetupPiDescription:
     'OpenPencil runs Pi through its Harness companion and uses the providers you signed in to in Pi.',

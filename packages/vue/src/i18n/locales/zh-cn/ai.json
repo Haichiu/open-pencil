@@ -285,7 +285,7 @@
   "aiSetupAgentSignInCode": "登录页面显示的代码（如有）",
   "aiSetupAgentSignInSubmitCode": "提交代码",
   "aiSetupAgentSignInFailed": "无法登录 {agent}。请重试。",
-  "aiSetupAgentAdapterMismatch": "这台电脑上的 {command} 是 OpenPencil 不支持的另一个适配器。请安装受支持的版本，并删除另一个或将其在 PATH 中后移。",
+  "aiSetupAgentAdapterMismatch": "OpenPencil 找到的 {path} 是它不支持的另一个适配器。请安装受支持的版本，并删除这个或将其在 PATH 中后移。",
   "aiSetupPiDescription": "OpenPencil 通过 Harness 配套程序运行 Pi，并使用你在 Pi 中登录的提供商。",
   "aiSetupPiCompanion": "Harness 配套程序",
   "aiSetupPiInstallCompanion": "安装配套程序",
