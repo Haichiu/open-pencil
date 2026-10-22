@@ -34,6 +34,8 @@ function fakeAgent(options: {
   status?: AgentAuthStatus
   /** Pushed after `authenticate` finishes; `authenticate` never finishes when absent. */
   afterSignIn?: AgentAuthStatus
+  /** False for an agent that starts but never answers `initialize`. */
+  answersInitialize?: boolean
 }) {
   const toAgent = new TransformStream<Uint8Array, Uint8Array>()
   const toClient = new TransformStream<Uint8Array, Uint8Array>()
@@ -45,6 +47,7 @@ function fakeAgent(options: {
   const agent: Agent = {
     async initialize(params) {
       initialized.push(params)
+      if (options.answersInitialize === false) return createDeferred<never>().promise
       if (options.status) {
         const status = options.status
         setTimeout(() => push(status), 5)
@@ -111,6 +114,14 @@ describe('checkAgentAuth', () => {
     const agent = fakeAgent({ status: SIGNED_OUT })
     await checkAgentAuth(codex, { spawn: agent.spawn })
     expect(agent.initialized[0]?.clientCapabilities?._meta).toEqual({ 'terminal-auth': true })
+  })
+
+  test('stops an agent that never answers initialize', async () => {
+    const agent = fakeAgent({ answersInitialize: false })
+    await expect(
+      checkAgentAuth(codex, { spawn: agent.spawn, initializeTimeoutMs: 20 })
+    ).rejects.toBe('The agent did not start.')
+    await agent.closed
   })
 
   test('reports an unknown login when the agent says nothing in time', async () => {

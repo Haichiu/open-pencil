@@ -114,10 +114,10 @@ describe('piDetection', () => {
     ...overrides
   })
 
-  test('reports Pi’s sign-ins and default model, then its companion', () => {
+  test('reports Pi’s sign-ins without naming its default model as an account', () => {
     expect(piDetection(pi({ signedIn: true, defaultModel: 'openai-codex/gpt-6' }))).toEqual({
       state: 'signed-in',
-      account: 'openai-codex/gpt-6'
+      account: null
     })
     expect(piDetection(pi({ companion: true }))).toEqual({ state: 'found' })
     expect(piDetection(pi({}))).toEqual({ state: 'not-found' })

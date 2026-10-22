@@ -1,5 +1,6 @@
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 import type { InitializeResponse } from '@agentclientprotocol/sdk'
+import { promiseTimeout } from '@vueuse/core'
 
 import type { ACPAgentDef } from '@open-pencil/core/constants'
 
@@ -26,9 +27,12 @@ export interface AuthSessionOptions {
   spawn?: SpawnAgent
   /** How long to wait for a login report; adapters read their CLI's with a 5 s limit. */
   statusTimeoutMs?: number
+  /** How long an agent may take to answer `initialize` before it counts as stuck. */
+  initializeTimeoutMs?: number
 }
 
 const STATUS_TIMEOUT_MS = 8_000
+const INITIALIZE_TIMEOUT_MS = 30_000
 
 /** What an agent says about its login when it starts, without a session or a prompt. */
 export interface AgentAuthCheck {
@@ -86,7 +90,10 @@ function createStatusLog() {
   }
 }
 
-async function openAuthSession(agent: ACPAgentDef, spawn: SpawnAgent = spawnAgentStreams) {
+async function openAuthSession(
+  agent: ACPAgentDef,
+  { spawn = spawnAgentStreams, initializeTimeoutMs = INITIALIZE_TIMEOUT_MS }: AuthSessionOptions
+) {
   const streams = await spawn(agent)
   const log = createStatusLog()
   const connection = new ClientSideConnection(
@@ -112,11 +119,16 @@ async function openAuthSession(agent: ACPAgentDef, spawn: SpawnAgent = spawnAgen
   let init: InitializeResponse
   try {
     init = await untilStopped(
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        // Without it, Claude's adapter offers no sign-in methods.
-        clientCapabilities: { _meta: { 'terminal-auth': true } }
-      })
+      Promise.race([
+        connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          // Without it, Claude's adapter offers no sign-in methods.
+          clientCapabilities: { _meta: { 'terminal-auth': true } }
+        }),
+        promiseTimeout(initializeTimeoutMs).then((): never => {
+          throw new Error('The agent did not start.')
+        })
+      ])
     )
   } catch (error) {
     await streams.close()
@@ -132,9 +144,10 @@ function adapterOf(init: InitializeResponse): AgentAuthCheck['adapter'] {
 /** Starts the agent, reads the login it reports, and stops it. */
 export async function checkAgentAuth(
   agent: ACPAgentDef,
-  { spawn, statusTimeoutMs = STATUS_TIMEOUT_MS }: AuthSessionOptions = {}
+  options: AuthSessionOptions = {}
 ): Promise<AgentAuthCheck> {
-  const session = await openAuthSession(agent, spawn)
+  const { statusTimeoutMs = STATUS_TIMEOUT_MS } = options
+  const session = await openAuthSession(agent, options)
   try {
     return {
       status: await session.log.next(0, statusTimeoutMs),
@@ -154,9 +167,10 @@ export async function signInWithAgent(
   agent: ACPAgentDef,
   methodId: string,
   signal: AbortSignal,
-  { spawn, statusTimeoutMs = STATUS_TIMEOUT_MS }: AuthSessionOptions = {}
+  options: AuthSessionOptions = {}
 ): Promise<AgentAuthStatus | null> {
-  const session = await openAuthSession(agent, spawn)
+  const { statusTimeoutMs = STATUS_TIMEOUT_MS } = options
+  const session = await openAuthSession(agent, options)
   const stop = () => void session.close()
   signal.addEventListener('abort', stop, { once: true })
   try {

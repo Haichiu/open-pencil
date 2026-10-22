@@ -34,6 +34,7 @@ export function codingAgentDetection(agent: ACPAgentDef, setup: AgentSetupState)
 
 export function piDetection(setup: PiSetupState): AgentDetection {
   if (!setup.checked) return { state: 'checking' }
-  if (setup.signedIn) return { state: 'signed-in', account: setup.defaultModel }
+  // Pi signs in to providers, not one account, so there is no account to name.
+  if (setup.signedIn) return { state: 'signed-in', account: null }
   return setup.companion ? { state: 'found' } : { state: 'not-found' }
 }
