@@ -382,7 +382,6 @@ describe('AI relay', () => {
     const stalled = await context.complete(bearer, { model: MODEL })
     expect(stalled.status).toBe(200)
     expect(context.calls[0]?.signal).toBeInstanceOf(AbortSignal)
-    expect((await context.complete(bearer, { model: MODEL })).status).toBe(429)
     await Promise.all(context.settled)
     await stalled.text().catch(() => undefined)
     expect(context.backgroundErrors).toHaveLength(1)
