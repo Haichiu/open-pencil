@@ -1,0 +1,1 @@
+- Claude Code, Codex, and Gemini CLI chats end when the agent finishes its turn, instead of staying busy until the agent exits, and an MCP server that fails to start shows its error instead of spinning.
