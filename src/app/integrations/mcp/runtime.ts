@@ -1,7 +1,8 @@
 import type { McpServer } from '@agentclientprotocol/sdk'
 
-import { AUTOMATION_HTTP_PORT, MCP_AGENT_HEADER } from '@open-pencil/core/constants'
+import { MCP_AGENT_HEADER } from '@open-pencil/core/constants'
 
+import { getMCPServerURL } from '@/app/automation/mcp/spawn'
 import { describeDiagnosticError, recordMCPConnectionFailure } from '@/app/diagnostics'
 import { appCredentialServices } from '@/app/settings/credentials/app'
 
@@ -15,7 +16,7 @@ export function builtInMCPServer(options: BuiltInMCPServerOptions): McpServer {
   return {
     type: 'http',
     name: 'open-pencil',
-    url: `http://127.0.0.1:${AUTOMATION_HTTP_PORT}/mcp`,
+    url: getMCPServerURL(),
     // An ACP chat's tool calls show as an ACP agent rather than an outside MCP client.
     headers: [
       { name: MCP_AGENT_HEADER, value: 'acp' },
