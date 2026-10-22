@@ -70,7 +70,9 @@ function fakeAgent(options: {
       authenticating.resolve(undefined)
       // Without a login to report, the sign-in waits as an unfinished browser login does.
       if (!options.afterSignIn) return createDeferred<never>().promise
-      push(options.afterSignIn)
+      // Reported after the answer, so the sign-in must wait past `authenticate` for it.
+      const status = options.afterSignIn
+      setTimeout(() => push(status), 5)
       return {}
     },
     async prompt() {

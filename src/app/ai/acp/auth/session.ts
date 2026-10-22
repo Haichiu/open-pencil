@@ -174,6 +174,8 @@ export async function signInWithAgent(
   const stop = () => void session.close()
   signal.addEventListener('abort', stop, { once: true })
   try {
+    // The login reported at startup must not pass for the one after signing in.
+    await session.untilStopped(session.log.next(0, statusTimeoutMs))
     signal.throwIfAborted()
     const seen = session.log.count
     await session.untilStopped(session.connection.authenticate({ methodId }))
