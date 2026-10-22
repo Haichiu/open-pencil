@@ -26,8 +26,11 @@ Optional, self-hostable backend; the design is in `packages/docs/development/clo
 
 ## AI relay
 
-- The reference AI service in `src/ai-relay/` is runtime-neutral like `src/server` and speaks only the contract in `src/contract/ai.ts`; it trusts nothing about a request beyond a token that verifies against Cloud's keys (`tests/integration/ai-relay/app.test.ts`).
-- The relay's tables are `ai_relay_*` with their own migration history (`src/ai-relay/db/migrate.ts`), so it can share Cloud's database; never let either read the other's tables.
+- The reference AI service in `src/ai-relay/` is runtime-neutral like `src/server`; runtimes own listening and keys (`src/runtime/node/ai-relay/server.ts`).
+- It speaks only the contract in `src/contract/ai.ts` (`tests/contract/ai.test.ts`).
+- It trusts nothing about a request beyond a token that verifies against Cloud's keys, and forwards only the chat fields it allows (`tests/integration/ai-relay/app.test.ts`).
+- The relay's tables are `ai_relay_*` with their own migration history, so it can share Cloud's database (`src/ai-relay/db/migrate.ts`).
+- Neither the relay nor Cloud reads the other's tables (`src/ai-relay/db/schema.ts`).
 
 ## Portal
 

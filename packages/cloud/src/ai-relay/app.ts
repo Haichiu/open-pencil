@@ -70,7 +70,7 @@ const FORWARDED_FIELDS = [
   'reasoning'
 ] as const
 
-/** How long an upstream answer may take, so a stalled one cannot hold a request slot forever. */
+/** How long an upstream answer may take in all, streamed or not, so a stalled one cannot hold a request slot forever. */
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 10 * 60_000
 
 function aiError(context: Context, code: AIErrorCode) {

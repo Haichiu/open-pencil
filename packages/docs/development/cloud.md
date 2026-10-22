@@ -298,7 +298,7 @@ streams for it with `stream_options.include_usage`, and keeps reading after the 
 so a request is still charged. It admits a request while credits remain and charges it afterwards,
 so in-flight requests can overdraw an allowance; the official service reserves credits instead. It forwards only
 chat completion fields, so a router's fallback or provider fields cannot run a model outside the
-catalog on its key, and gives up on an upstream that stalls for ten minutes.
+catalog on its key. An upstream answer has ten minutes in all, streamed or not, before the relay ends it.
 
 Services that decide entitlements, such as billing, write them through the internal API rather than
 the database: `setWorkspaceEntitlements` in `src/server/internal`, which runtimes expose over HTTP
