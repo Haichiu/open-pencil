@@ -1,3 +1,4 @@
+import { isEmptyDocumentChange } from '@open-pencil/core/editor'
 import type { FigmaAPI } from '@open-pencil/core/figma-api'
 import {
   ALL_TOOLS,
@@ -8,6 +9,7 @@ import {
 } from '@open-pencil/core/tools'
 import type { JSONObject } from '@open-pencil/scene-graph/primitives'
 
+import { recordToolChange } from '@/app/ai/tools/changes/capture'
 import { agentReplyRun, aiUndoLabel, recordRunUndoEntry, type Run } from '@/app/ai/tools/run'
 import {
   agentFinished,
@@ -72,12 +74,23 @@ export function createAutomationToolHandler(makeFigma: FigmaFactory) {
     if (!reply || !call) return run()
     const store = target.store
     const undoBefore = store.undo.peekUndo()
+    const finishChange = store.captureDocumentChange(target.pageId)
     reply.beginTool()
     try {
       return await run()
     } finally {
+      const change = finishChange()
       recordRunUndoEntry(store, reply, { tool: toolName, toolCallId: call }, undoBefore)
-      if (store.undo.peekUndo() !== undoBefore) reply.changedCalls.add(call)
+      if (!isEmptyDocumentChange(change)) {
+        reply.changedCalls.add(call)
+        try {
+          // The card's before and after, as the built-in chat's calls show theirs.
+          recordToolChange(store, call, change)
+        } catch (error) {
+          // The change record is a review aid; the edit and its undo entry already stand.
+          console.warn('Could not record agent tool change', error)
+        }
+      }
       reply.endTool()
     }
   }
