@@ -98,7 +98,7 @@ test('joining from a document opens a new tab and leaves that document alone', a
     await guest.page.getByTestId('tabbar-tab').first().click()
     await expect.poll(() => layerName((guest as Peer).page, ownNode)).toBe('My own work')
     expect(await roomStatus(guest)).toBeNull()
-    await expect(guest.page).not.toHaveURL(/\/share\//)
+    await expect(guest.page).not.toHaveURL(/\/rooms\//)
     await expect
       .poll(() => host?.page.evaluate(() => window.openPencil?.test?.collab?.peerCount()))
       .toBe(1)
@@ -149,7 +149,7 @@ test('reloading a room tab rejoins it, and leaving keeps an unsaved copy', async
     expect(
       await guest.page.evaluate(() => window.openPencil?.getStore?.().hasUnsavedChanges())
     ).toBe(true)
-    await expect(guest.page).not.toHaveURL(/\/share\//)
+    await expect(guest.page).not.toHaveURL(/\/rooms\//)
     await expect
       .poll(() => host?.page.evaluate(() => window.openPencil?.test?.collab?.peerCount()))
       .toBe(0)
