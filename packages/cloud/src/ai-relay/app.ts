@@ -216,7 +216,9 @@ export function createAIRelayApp(services: AIRelayServices) {
         const [answer, metered] = upstream.body.tee()
         const settle = async () => {
           const tokens = await meteredUsage(metered, streamed)
-          if (!tokens) return
+          // An upstream that reports no usage leaves the request uncharged, so operators hear of it.
+          if (!tokens)
+            throw new Error(`The upstream reported no usage for ${model.id}; not charged`)
           await usage.record({
             id: crypto.randomUUID(),
             workspaceId: claims.workspaceId,

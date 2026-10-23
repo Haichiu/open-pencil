@@ -201,6 +201,24 @@ describe('AI relay', () => {
     expect(usage.next).toBeNull()
   })
 
+  test('reports a completion the upstream gives no usage for, which goes uncharged', async () => {
+    const context = await relay(() =>
+      Response.json({ choices: [{ message: { role: 'assistant', content: 'Hi' } }] })
+    )
+    const bearer = await context.token()
+    const response = await context.complete(bearer, { model: MODEL, messages: [] })
+    expect(response.status).toBe(200)
+    await response.text()
+    await Promise.all(context.settled)
+
+    expect(context.backgroundErrors).toHaveLength(1)
+    const usage = await responseJSON(
+      await context.request(CLOUD_AI_API_PATHS.usage, bearer),
+      aiUsagePageSchema
+    )
+    expect(usage.entries).toEqual([])
+  })
+
   test('asks a streamed completion for usage and charges it after the stream ends', async () => {
     const context = await relay(
       () =>
