@@ -10,6 +10,7 @@ import {
 import { validatedQuery } from '#cloud/server/validation'
 import { pick } from 'es-toolkit'
 import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
 import { jwtVerify, type JWTVerifyGetKey } from 'jose'
 import type { Kysely } from 'kysely'
@@ -162,67 +163,76 @@ export function createAIRelayApp(services: AIRelayServices) {
         throw error
       }
     })
-    .post(CLOUD_AI_API_PATHS.chatCompletions, async (context) => {
-      const claims = context.get('claims')
-      const parsed = v.safeParse(chatRequestBodySchema, await context.req.text())
-      if (!parsed.success) return context.json({ error: { code: 'invalid_request' as const } }, 400)
-      const request = pick(parsed.output, FORWARDED_FIELDS)
-      const model = models.get(request.model)
-      if (!model) return aiError(context, 'model_not_allowed')
-      const wallet = await usage.wallet(claims.workspaceId, claims.monthlyCreditAllowance, now())
-      if (wallet.balance === 0) return aiError(context, 'insufficient_credits')
-      const release = limiter.acquire(claims.workspaceId)
-      if (!release) return aiError(context, 'rate_limited')
+    .post(
+      CLOUD_AI_API_PATHS.chatCompletions,
+      // Counted as it streams in, so a body without Content-Length is bounded too.
+      bodyLimit({
+        maxSize: config.maximumRequestBytes,
+        onError: (context) => context.json({ error: { code: 'invalid_request' as const } }, 413)
+      }),
+      async (context) => {
+        const claims = context.get('claims')
+        const parsed = v.safeParse(chatRequestBodySchema, await context.req.text())
+        if (!parsed.success)
+          return context.json({ error: { code: 'invalid_request' as const } }, 400)
+        const request = pick(parsed.output, FORWARDED_FIELDS)
+        const model = models.get(request.model)
+        if (!model) return aiError(context, 'model_not_allowed')
+        const wallet = await usage.wallet(claims.workspaceId, claims.monthlyCreditAllowance, now())
+        if (wallet.balance === 0) return aiError(context, 'insufficient_credits')
+        const release = limiter.acquire(claims.workspaceId)
+        if (!release) return aiError(context, 'rate_limited')
 
-      const streamed = request.stream === true
-      let upstream: Response
-      try {
-        upstream = await upstreamFetch(`${config.upstreamURL}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${config.upstreamKey}`
-          },
-          body: JSON.stringify(
-            streamed ? { ...request, stream_options: { include_usage: true } } : request
-          ),
-          // Aborting also errors a stream in progress, so metering ends and frees the slot.
-          signal: AbortSignal.timeout(services.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS)
-        })
-      } catch (error) {
-        release()
-        throw error
-      }
-      const headers = new Headers()
-      const contentType = upstream.headers.get('Content-Type')
-      if (contentType) headers.set('Content-Type', contentType)
-      if (streamed) headers.set('Cache-Control', 'no-cache')
-      if (!upstream.ok || !upstream.body) {
-        release()
-        return new Response(upstream.body, { status: upstream.status, headers })
-      }
+        const streamed = request.stream === true
+        let upstream: Response
+        try {
+          upstream = await upstreamFetch(`${config.upstreamURL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${config.upstreamKey}`
+            },
+            body: JSON.stringify(
+              streamed ? { ...request, stream_options: { include_usage: true } } : request
+            ),
+            // Aborting also errors a stream in progress, so metering ends and frees the slot.
+            signal: AbortSignal.timeout(services.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS)
+          })
+        } catch (error) {
+          release()
+          throw error
+        }
+        const headers = new Headers()
+        const contentType = upstream.headers.get('Content-Type')
+        if (contentType) headers.set('Content-Type', contentType)
+        if (streamed) headers.set('Cache-Control', 'no-cache')
+        if (!upstream.ok || !upstream.body) {
+          release()
+          return new Response(upstream.body, { status: upstream.status, headers })
+        }
 
-      // The metering branch reads to the end even if the editor disconnects, so the request is
-      // still charged for what the upstream generated.
-      const [answer, metered] = upstream.body.tee()
-      const settle = async () => {
-        const tokens = await meteredUsage(metered, streamed)
-        if (!tokens) return
-        await usage.record({
-          id: crypto.randomUUID(),
-          workspaceId: claims.workspaceId,
-          userId: claims.sub,
-          modelId: model.id,
-          inputTokens: tokens.inputTokens,
-          outputTokens: tokens.outputTokens,
-          credits: creditsFor(model, tokens),
-          createdAt: now()
-        })
+        // The metering branch reads to the end even if the editor disconnects, so the request is
+        // still charged for what the upstream generated.
+        const [answer, metered] = upstream.body.tee()
+        const settle = async () => {
+          const tokens = await meteredUsage(metered, streamed)
+          if (!tokens) return
+          await usage.record({
+            id: crypto.randomUUID(),
+            workspaceId: claims.workspaceId,
+            userId: claims.sub,
+            modelId: model.id,
+            inputTokens: tokens.inputTokens,
+            outputTokens: tokens.outputTokens,
+            credits: creditsFor(model, tokens),
+            createdAt: now()
+          })
+        }
+        const settled = settle().catch(reportBackgroundError).finally(release)
+        services.waitUntil?.(settled)
+        return new Response(answer, { status: upstream.status, headers })
       }
-      const settled = settle().catch(reportBackgroundError).finally(release)
-      services.waitUntil?.(settled)
-      return new Response(answer, { status: upstream.status, headers })
-    })
+    )
 }
 
 export type AIRelayApp = ReturnType<typeof createAIRelayApp>

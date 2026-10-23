@@ -62,7 +62,7 @@ function streamOf(...events: unknown[]): string {
 
 async function relay(
   upstream: (call: UpstreamCall) => Response = () => Response.json({}),
-  options: { upstreamTimeoutMs?: number } = {}
+  options: { upstreamTimeoutMs?: number; maxRequestBytes?: number } = {}
 ) {
   const pglite = await PGlite.create({ dataDir: 'memory://' })
   const database = createAIRelayDatabase(new PGliteDialect(pglite))
@@ -75,10 +75,16 @@ async function relay(
   const settled: Promise<unknown>[] = []
   const backgroundErrors: unknown[] = []
   const app = createAIRelayApp({
-    config: parseAIRelayConfig(configInput, {
-      DATABASE_URL: 'postgresql://unused',
-      OPENPENCIL_AI_RELAY_UPSTREAM_KEY: 'upstream-key'
-    }),
+    config: parseAIRelayConfig(
+      {
+        ...configInput,
+        relay: { ...configInput.relay, max_request_bytes: options.maxRequestBytes }
+      },
+      {
+        DATABASE_URL: 'postgresql://unused',
+        OPENPENCIL_AI_RELAY_UPSTREAM_KEY: 'upstream-key'
+      }
+    ),
     database,
     keys,
     now: () => NOW,
@@ -364,6 +370,27 @@ describe('AI relay', () => {
       tools: [],
       temperature: 0.2
     })
+  })
+
+  test('refuses a body past the size limit, even without Content-Length, before the upstream', async () => {
+    const context = await relay(undefined, { maxRequestBytes: 1024 })
+    const bearer = await context.token()
+    const oversized = new TextEncoder().encode(
+      JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'x'.repeat(4096) }] })
+    )
+    const response = await context.request(CLOUD_AI_API_PATHS.chatCompletions, bearer, {
+      method: 'POST',
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(oversized)
+          controller.close()
+        }
+      }),
+      duplex: 'half'
+    })
+    expect(response.status).toBe(413)
+    expect(context.calls).toHaveLength(0)
+    expect((await context.complete(bearer, { model: MODEL, messages: [] })).status).not.toBe(413)
   })
 
   test('gives up on a stalled upstream and frees its request slot', async () => {

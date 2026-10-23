@@ -11,6 +11,8 @@ cloud_url = "http://localhost:8787"
 allowed_origins = ["http://localhost:5173"]
 # Model requests one workspace may have in flight at once.
 max_concurrent_requests = 4
+# The largest model request accepted, in bytes; vision requests carry their images inline.
+max_request_bytes = 16777216
 
 # Defaults to DATABASE_URL. The relay can share Cloud's database; its tables and migration history
 # are its own.

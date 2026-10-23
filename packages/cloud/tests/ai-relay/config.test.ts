@@ -38,6 +38,7 @@ describe('AI relay configuration', () => {
       cloudURL: 'https://cloud.example.com',
       allowedOrigins: ['https://app.example.com'],
       maximumConcurrentRequests: 4,
+      maximumRequestBytes: 16 * 1024 * 1024,
       databaseURL: environment.DATABASE_URL,
       upstreamURL: 'https://openrouter.ai/api/v1',
       upstreamKey: 'upstream-key'

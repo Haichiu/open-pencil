@@ -12,6 +12,8 @@ export type AIRelayConfig = {
   allowedOrigins: string[]
   /** Model requests a workspace may have in flight at once. */
   maximumConcurrentRequests: number
+  /** The largest model request body accepted, in bytes. */
+  maximumRequestBytes: number
   databaseURL: string
   /** An OpenAI-compatible API base URL, such as `https://openrouter.ai/api/v1`. */
   upstreamURL: string
@@ -52,7 +54,9 @@ export const aiRelayConfigSchema = v.object({
   relay: v.object({
     cloud_url: httpURLSchema,
     allowed_origins: v.optional(v.array(httpURLSchema), []),
-    max_concurrent_requests: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1)), 4)
+    max_concurrent_requests: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1)), 4),
+    // Room for the images a vision request carries inline.
+    max_request_bytes: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1)), 16 * 1024 * 1024)
   }),
   database: v.optional(v.object({ url: defaultReference(DEFAULT_SECRET_NAMES.databaseURL) }), {
     url: { from_env: DEFAULT_SECRET_NAMES.databaseURL }
@@ -103,6 +107,7 @@ export function parseAIRelayConfig(input: unknown, environment: AIRelayEnvironme
     cloudURL: new URL(config.relay.cloud_url).origin,
     allowedOrigins: config.relay.allowed_origins.map((origin) => new URL(origin).origin),
     maximumConcurrentRequests: config.relay.max_concurrent_requests,
+    maximumRequestBytes: config.relay.max_request_bytes,
     databaseURL: requiredSecret(environment, config.database.url.from_env),
     upstreamURL: config.upstream.base_url.replace(/\/+$/, ''),
     upstreamKey: requiredSecret(environment, config.upstream.api_key.from_env),
