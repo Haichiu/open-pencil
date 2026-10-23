@@ -4,6 +4,7 @@ import type { GUID } from '@open-pencil/kiwi/fig'
 import type { NodeChange } from '@open-pencil/kiwi/fig/codec'
 import { guidToString, isUnsetGuid, UNSET_GUID } from '@open-pencil/kiwi/fig/guid'
 import type {
+  ConnectorControlPoint,
   ConnectorEndpoint,
   ConnectorLineType,
   ConnectorMagnet,
@@ -51,6 +52,38 @@ const CONNECTOR_RECORD_FIELDS = [
   'pluginData',
   'pluginRelaunchData'
 ] as const
+
+interface KiwiControlPoint {
+  position?: Vector
+  axis?: Vector
+}
+
+/**
+ * A record's control points, in its parent's axes, as points in the connector's own: an elbow's
+ * segments along their axes, or a curve's two control points.
+ */
+function controlPointsOf(value: unknown, origin: Vector): ConnectorControlPoint[] {
+  if (!Array.isArray(value)) return []
+  return (value as KiwiControlPoint[]).map(({ position, axis }) => ({
+    position: { x: (position?.x ?? 0) - origin.x, y: (position?.y ?? 0) - origin.y },
+    direction: axis?.x ? 'HORIZONTAL' : 'VERTICAL'
+  }))
+}
+
+function curveHandlesOf(value: unknown, origin: Vector): [Vector, Vector] | null {
+  const points = controlPointsOf(value, origin)
+  const first = points.at(0)
+  const second = points.at(1)
+  return first && second ? [first.position, second.position] : null
+}
+
+/** Control points as Figma writes them, in the connector's parent's axes. */
+function kiwiControlPoints(points: ConnectorControlPoint[], origin: Vector) {
+  return points.map(({ position, direction }) => ({
+    position: { x: position.x + origin.x, y: position.y + origin.y },
+    axis: direction === 'HORIZONTAL' ? { x: 1, y: 0 } : { x: 0, y: 1 }
+  }))
+}
 
 interface KiwiConnectorEndpoint {
   endpointNodeID?: GUID
@@ -179,7 +212,9 @@ function readConnector(
         ? (lineType as ConnectorLineType)
         : 'ELBOWED',
     connectorStartCap: capOf(record.connectorStartCap, 'ROUND'),
-    connectorEndCap: capOf(record.connectorEndCap, 'ARROW_LINES')
+    connectorEndCap: capOf(record.connectorEndCap, 'ARROW_LINES'),
+    connectorControlPoints: controlPointsOf(record.connectorControlPoints, connector),
+    connectorCurveHandles: curveHandlesOf(record.connectorBezierControlPoints, connector)
   })
   const text = overrides.get(label)?.textData?.characters ?? ''
   const plate = sublayerProps(
@@ -246,6 +281,16 @@ function writeConnector(
   record.connectorLineStyle = node.connectorLineType
   record.connectorStartCap = node.connectorStartCap
   record.connectorEndCap = node.connectorEndCap
+  if (node.connectorControlPoints.length > 0) {
+    record.connectorControlPoints = kiwiControlPoints(node.connectorControlPoints, node)
+  }
+  if (node.connectorCurveHandles) {
+    // Figma gives a curve's control points a horizontal axis, which nothing reads.
+    record.connectorBezierControlPoints = kiwiControlPoints(
+      node.connectorCurveHandles.map((position) => ({ position, direction: 'HORIZONTAL' })),
+      node
+    )
+  }
   record.connectorType = 'MANUAL'
   record.connectorVersion = 1
   const { line, label, labelBackground } = sublayers

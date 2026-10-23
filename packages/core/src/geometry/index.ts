@@ -40,7 +40,12 @@ export type {
   GradientHit,
   GradientStopLayout
 } from './gradient'
-export { connectorScreenEnds } from './connectors'
+export {
+  CONNECTOR_SEGMENT_HANDLE,
+  connectorRouteHandles,
+  connectorScreenEnds,
+  type ConnectorRouteHandle
+} from './connectors'
 export {
   aimLine,
   draggedLineEnds,

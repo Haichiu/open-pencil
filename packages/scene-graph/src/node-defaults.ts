@@ -166,6 +166,8 @@ export function createDefaultNode(
     connectorLineType: 'ELBOWED',
     connectorStartCap: 'ROUND',
     connectorEndCap: 'ARROW_LINES',
+    connectorControlPoints: [],
+    connectorCurveHandles: null,
     isMask: false,
     maskType: 'ALPHA',
     maskIsOutline: false,

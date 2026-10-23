@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 
+import * as v from 'valibot'
+
 import { expectDefined } from '#core-tests/helpers/assert'
 import { FIXTURES } from '#core-tests/helpers/paths'
 
@@ -125,6 +127,81 @@ describe('FigJam connectors', () => {
         name: connector.name,
         route: pageRoute(drawn.graph, figma)
       })
+    }
+  })
+})
+
+/** A curve's control points as a `.fig` record keeps them. */
+const HANDLES = v.optional(
+  v.array(v.object({ position: v.object({ x: v.number(), y: v.number() }) }))
+)
+
+/**
+ * A FigJam section holding two shapes, an elbow dragged at its middle and then its first segment,
+ * and a curve dragged at its midpoint, as FigJam copies them.
+ */
+const DRAGGED = join(FIXTURES, 'clipboard/figjam-connector-controls.html')
+
+describe('FigJam connectors dragged into place', () => {
+  test('keep their control points and route again as Figma drew them', async () => {
+    const { graph } = await importFixture(await Bun.file(DRAGGED).text())
+    // They sit inside the section the copy holds.
+    const named = (name: string) =>
+      expectDefined([...graph.getAllNodes()].find((node) => node.name === name))
+    const elbow = named('cp-elbow')
+    const curve = named('cp-curve')
+    // Figma keeps them in the section's axes; here they are in the connector's own.
+    expect(
+      elbow.connectorControlPoints.map(({ position, direction }) => [
+        direction,
+        position.x + elbow.x,
+        position.y + elbow.y
+      ])
+    ).toEqual([
+      ['VERTICAL', 304, 80],
+      ['HORIZONTAL', 376, 48],
+      ['VERTICAL', 448, 240]
+    ])
+    expect(curve.connectorCurveHandles).not.toBeNull()
+    for (const connector of [elbow, curve]) {
+      const figma = pageRoute(graph, connector)
+      layoutConnector(graph, connector)
+      expect({ name: connector.name, route: pageRoute(graph, connector) }).toEqual({
+        name: connector.name,
+        route: figma
+      })
+    }
+  })
+
+  test('export writes their control points where Figma wrote them', async () => {
+    const html = await Bun.file(DRAGGED).text()
+    const source = expectDefined(await parseFigmaClipboard(html))
+    const { graph, ids } = await importFixture(html)
+    const exported = expectDefined(
+      await parseFigmaClipboard(
+        expectDefined(
+          await buildFigmaClipboardHTML(
+            ids.map((id) => expectDefined(graph.getNode(id))),
+            graph
+          )
+        )
+      )
+    )
+    for (const name of ['cp-elbow', 'cp-curve']) {
+      const before = expectDefined(source.nodes.find((node) => node.name === name))
+      const after = expectDefined(exported.nodes.find((node) => node.name === name))
+      expect({ name, points: after.connectorControlPoints }).toEqual({
+        name,
+        points: before.connectorControlPoints
+      })
+      const handles = (node: typeof before) =>
+        v
+          .parse(HANDLES, node.connectorBezierControlPoints)
+          ?.map(({ position }) => [
+            Math.round(position.x * 100) / 100,
+            Math.round(position.y * 100) / 100
+          ])
+      expect({ name, handles: handles(after) }).toEqual({ name, handles: handles(before) })
     }
   })
 })
