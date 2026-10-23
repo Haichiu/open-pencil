@@ -33,23 +33,23 @@ const DEFAULT_SECRET_NAMES = {
   upstreamKey: 'OPENPENCIL_AI_RELAY_UPSTREAM_KEY'
 } as const
 
-const text = v.pipe(v.string(), v.trim(), v.minLength(1))
-const credits = v.pipe(v.number(), v.integer(), v.minValue(0))
-const secretReferenceSchema = v.object({ from_env: text })
+const textSchema = v.pipe(v.string(), v.trim(), v.minLength(1))
+const creditsSchema = v.pipe(v.number(), v.integer(), v.minValue(0))
+const secretReferenceSchema = v.object({ from_env: textSchema })
 const defaultReference = (name: string) => v.optional(secretReferenceSchema, { from_env: name })
 
 const modelSchema = v.object({
-  id: text,
-  label: text,
-  credits_per_million_input_tokens: credits,
-  credits_per_million_output_tokens: credits,
+  id: textSchema,
+  label: textSchema,
+  credits_per_million_input_tokens: creditsSchema,
+  credits_per_million_output_tokens: creditsSchema,
   context_tokens: v.pipe(v.number(), v.integer(), v.minValue(1)),
   reasoning: v.optional(v.boolean(), false),
   vision: v.optional(v.boolean(), false),
   tools: v.optional(v.boolean(), true)
 })
 
-export const aiRelayConfigSchema = v.object({
+const aiRelayConfigSchema = v.object({
   schema_version: v.literal(1),
   relay: v.object({
     cloud_url: httpURLSchema,
@@ -66,7 +66,7 @@ export const aiRelayConfigSchema = v.object({
     api_key: defaultReference(DEFAULT_SECRET_NAMES.upstreamKey)
   }),
   catalog: v.object({
-    default_model: text,
+    default_model: textSchema,
     models: v.pipe(v.array(modelSchema), v.minLength(1))
   })
 })

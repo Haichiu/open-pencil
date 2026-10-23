@@ -3,9 +3,9 @@ import * as v from 'valibot'
 
 export type TokenUsage = { inputTokens: number; outputTokens: number }
 
-const tokens = v.pipe(v.number(), v.integer(), v.minValue(0))
+const tokensSchema = v.pipe(v.number(), v.integer(), v.minValue(0))
 const usageSchema = v.object({
-  usage: v.object({ prompt_tokens: tokens, completion_tokens: tokens })
+  usage: v.object({ prompt_tokens: tokensSchema, completion_tokens: tokensSchema })
 })
 
 const usageBodySchema = v.pipe(v.string(), v.parseJson(), usageSchema)

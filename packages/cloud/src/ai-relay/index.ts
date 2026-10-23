@@ -1,7 +1,6 @@
 export { createAIRelayApp, type AIRelayApp, type AIRelayServices } from './app'
 export {
   AIRelayConfigError,
-  aiRelayConfigSchema,
   parseAIRelayConfig,
   parseAIRelayTOML,
   type AIRelayConfig,

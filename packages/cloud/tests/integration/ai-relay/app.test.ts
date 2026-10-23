@@ -385,8 +385,7 @@ describe('AI relay', () => {
           controller.enqueue(oversized)
           controller.close()
         }
-      }),
-      duplex: 'half'
+      })
     })
     expect(response.status).toBe(413)
     expect(context.calls).toHaveLength(0)
