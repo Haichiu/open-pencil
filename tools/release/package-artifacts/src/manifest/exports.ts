@@ -114,7 +114,7 @@ export function validateManifest(manifest: PackageManifest): PackageDiagnostic[]
   }
   // A wildcard target is used as written: Bun 1.3 adds no extension, so `./src/*` names no file.
   for (const entry of collectExportTargets(manifest.imports, ['imports'])) {
-    if (entry.target.includes('*') && !/\*\.[a-z.]+$/.test(entry.target)) {
+    if (entry.target.includes('*') && !/\.[a-z]+$/i.test(entry.target)) {
       report(entry.field, `wildcard target names no extension (${entry.target})`)
     }
   }

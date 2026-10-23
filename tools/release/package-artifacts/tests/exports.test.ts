@@ -70,4 +70,13 @@ describe('export metadata', () => {
       'wildcard target names no extension (./src/*)'
     ])
   })
+
+  test('accepts a wildcard import target that names an index file', () => {
+    expect(
+      validateManifest({
+        ...validManifest,
+        imports: { '#example/*': { types: './dist/*/index.d.ts', default: './dist/*/index.js' } }
+      })
+    ).toEqual([])
+  })
 })

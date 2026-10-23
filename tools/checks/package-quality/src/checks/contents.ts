@@ -15,15 +15,16 @@ export function packageContentDiagnostics(
   packageName: string,
   files: readonly string[]
 ): PackageDiagnostic[] {
+  const paths = files.map((file) => file.replaceAll('\\', '/'))
   const diagnostics: PackageDiagnostic[] = []
-  if (files.some((file) => file.startsWith('packages/'))) {
+  if (paths.some((file) => file.startsWith('packages/'))) {
     diagnostics.push({
       packageName,
       field: 'dist',
       message: "holds another workspace package's source under dist/packages; import its types"
     })
   }
-  if (files.some((file) => file.split('/').includes('node_modules'))) {
+  if (paths.some((file) => file.split('/').includes('node_modules'))) {
     diagnostics.push({
       packageName,
       field: 'dist',
@@ -39,9 +40,10 @@ async function builtFiles(directory: string): Promise<string[]> {
     return entries
       .filter((entry) => entry.isFile())
       .map((entry) => join(entry.parentPath, entry.name).slice(directory.length + 1))
-  } catch {
+  } catch (error) {
     // A package not built yet has nothing to check; Publint reports the missing entries.
-    return []
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return []
+    throw error
   }
 }
 

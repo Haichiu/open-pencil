@@ -17,6 +17,15 @@ describe('package contents', () => {
     ])
   })
 
+  test('Windows separators are read as /', () => {
+    expect(
+      packageContentDiagnostics('@x/a', [
+        'packages\\core\\src\\index.d.ts',
+        'node_modules\\lib\\a.js'
+      ])
+    ).toHaveLength(2)
+  })
+
   test('a node_modules folder fails', () => {
     expect(
       packageContentDiagnostics('@x/a', ['node_modules/.bun/lib/index.js']).map(
