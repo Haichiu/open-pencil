@@ -138,6 +138,9 @@ export default defineConfig({
     'testing/index': './src/testing/index.ts',
     'variables/index': './src/variables/index.ts'
   },
+  // The workspace tsconfig maps Core to its source so unbuilt code runs under Bun; the build
+  // resolves Core as a consumer does, so declarations import its types instead of copying them.
+  tsconfig: 'tsconfig.build.json',
   platform: 'browser',
   format: ['esm'],
   dts: {
