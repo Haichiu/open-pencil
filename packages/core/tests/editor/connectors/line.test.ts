@@ -200,3 +200,38 @@ describe('dragging a curved connector', () => {
     }
   })
 })
+
+describe('dragging a connector label', () => {
+  test('slides it along the line or off to one side, and undo puts it back', async () => {
+    const editor = createEditor()
+    try {
+      const page = editor.state.currentPageId
+      const graph = editor.graph
+      const from = graph.createNode('RECTANGLE', page, { x: 0, y: 0, width: 160, height: 160 })
+      const to = graph.createNode('RECTANGLE', page, { x: 480, y: 0, width: 160, height: 160 })
+      const connector = graph.createNode('CONNECTOR', page, {
+        connectorStart: boundEndpoint(from.id),
+        connectorEnd: boundEndpoint(to.id)
+      })
+      buildConnectorSublayers(graph, connector, { label: { text: 'detour', width: 50, height: 24 } })
+      layoutConnector(graph, connector)
+      await drag(editor, connector, { kind: 'label' }, [320, 80], [420, 80])
+      const position = () => editor.graph.getNode(connector.id)?.connectorLabelPosition
+      expect(position()).toMatchObject({ section: 'MIDDLE_TO_END', offAxis: 'NONE' })
+      expect(position()?.offset).toBeCloseTo(100 / 153.75, 3)
+      await drag(editor, connector, { kind: 'label' }, [420, 80], [420, 140])
+      expect(position()?.offAxis).toBe('BELOW')
+      // Beside the line, the line runs on uncut.
+      expect(route(editor, connector)).toEqual([
+        [166, 80],
+        [473.5, 80]
+      ])
+      editor.undoAction()
+      editor.undoAction()
+      await settle()
+      expect(position()).toBeNull()
+    } finally {
+      editor.dispose()
+    }
+  })
+})

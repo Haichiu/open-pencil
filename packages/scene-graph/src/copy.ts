@@ -317,6 +317,7 @@ export function cloneNodeProps(
     connectorStart: src.connectorStart ? copyConnectorEndpoint(src.connectorStart) : null,
     connectorEnd: src.connectorEnd ? copyConnectorEndpoint(src.connectorEnd) : null,
     connectorControlPoints: structuredClone(src.connectorControlPoints),
-    connectorCurveHandles: structuredClone(src.connectorCurveHandles)
+    connectorCurveHandles: structuredClone(src.connectorCurveHandles),
+    connectorLabelPosition: src.connectorLabelPosition ? { ...src.connectorLabelPosition } : null
   }
 }

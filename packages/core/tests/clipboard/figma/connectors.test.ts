@@ -177,6 +177,13 @@ describe('FigJam connectors dragged into place', () => {
     const html = await Bun.file(DRAGGED).text()
     const source = expectDefined(await parseFigmaClipboard(html))
     const { graph, ids } = await importFixture(html)
+    // A label dragged along the line keeps its place.
+    const elbow = expectDefined(
+      [...graph.getAllNodes()].find((node) => node.name === 'cp-elbow')
+    )
+    graph.updateNode(elbow.id, {
+      connectorLabelPosition: { section: 'MIDDLE_TO_END', offset: 0.5, offAxis: 'ABOVE' }
+    })
     const exported = expectDefined(
       await parseFigmaClipboard(
         expectDefined(
@@ -203,6 +210,12 @@ describe('FigJam connectors dragged into place', () => {
           ])
       expect({ name, handles: handles(after) }).toEqual({ name, handles: handles(before) })
     }
+    const reread = expectDefined(exported.nodes.find((node) => node.name === 'cp-elbow'))
+    expect(reread.connectorTextMidpoint).toEqual({
+      section: 'MIDDLE_TO_END',
+      offset: 0.5,
+      offAxisOffset: 'ABOVE'
+    })
   })
 })
 

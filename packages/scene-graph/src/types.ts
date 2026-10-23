@@ -286,6 +286,17 @@ export interface ConnectorControlPoint {
   position: Vector
   direction: 'HORIZONTAL' | 'VERTICAL'
 }
+
+/**
+ * Where a connector's label was dragged along its line: `offset` of the way from the middle of
+ * the line towards one end, by length, on the line or to one side of it. `ABOVE` is the side to
+ * the left of the line's direction.
+ */
+export interface ConnectorLabelPosition {
+  section: 'MIDDLE_TO_START' | 'MIDDLE_TO_END'
+  offset: number
+  offAxis: 'NONE' | 'ABOVE' | 'BELOW'
+}
 export type TextAlignVertical = 'TOP' | 'CENTER' | 'BOTTOM'
 export type TextCase = 'ORIGINAL' | 'UPPER' | 'LOWER' | 'TITLE'
 export type TextDecoration = 'NONE' | 'UNDERLINE' | 'STRIKETHROUGH'
@@ -735,6 +746,8 @@ export interface SceneNode {
    * was dragged; null while it curves by itself. Kept, unused, while the line is not curved.
    */
   connectorCurveHandles: [Vector, Vector] | null
+  /** Where a connector's label was dragged to; null while it sits midway along the line. */
+  connectorLabelPosition: ConnectorLabelPosition | null
 
   isMask: boolean
   maskType: MaskType

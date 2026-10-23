@@ -1,6 +1,8 @@
 import type { SceneNode } from '@open-pencil/scene-graph'
 import {
+  connectorLabelPositionAt,
   connectorRoute,
+  connectorSublayers,
   curveControlPoints,
   dragCurve,
   dragElbowSegment,
@@ -9,15 +11,24 @@ import {
 } from '@open-pencil/scene-graph/connectors'
 import { getParentWorldMatrix } from '@open-pencil/scene-graph/coordinate'
 import Matrix from '@open-pencil/scene-graph/matrix'
-import type { Vector } from '@open-pencil/scene-graph/primitives'
+import type { Rect, Vector } from '@open-pencil/scene-graph/primitives'
 
 import type { NodePreview } from '#core/editor/node-preview'
 import type { EditorContext } from '#core/editor/types'
 
 type BeginNodePreview = (label?: string) => NodePreview
 
-/** What a drag on a connector's line holds: an elbow segment by its index, or the curve. */
-export type ConnectorLinePart = { kind: 'segment'; index: number } | { kind: 'curve' }
+const PREVIEW_LABELS: Record<ConnectorLinePart['kind'], string> = {
+  segment: 'Move connector segment',
+  curve: 'Bend connector',
+  label: 'Move connector label'
+}
+
+/** What a drag on a connector's line holds: an elbow segment by its index, the curve, or the label. */
+export type ConnectorLinePart =
+  | { kind: 'segment'; index: number }
+  | { kind: 'curve' }
+  | { kind: 'label' }
 
 interface LineDrag {
   connectorId: string
@@ -28,6 +39,8 @@ interface LineDrag {
   pieces: ConnectorPiece[]
   joints: [Vector, Vector]
   handles: [Vector, Vector] | null
+  /** The label's plate as the drag found it, in the connector's parent's axes. */
+  plate: Rect | null
   preview: NodePreview
 }
 
@@ -37,8 +50,9 @@ function shifted(point: Vector, by: Vector): Vector {
 
 /**
  * Dragging a selected connector's line, as FigJam does: an elbow segment moves across itself, to
- * whole pixels, and a curve bends so the point midway along it follows the pointer. The
- * connector keeps the result as its control points, and one undo step puts the line back.
+ * whole pixels, a curve bends so the point midway along it follows the pointer, and the label
+ * slides along the line or off to one side of it. The connector keeps the result, and one undo
+ * step puts it back.
  */
 export function createConnectorLineActions(ctx: EditorContext, beginNodePreview: BeginNodePreview) {
   let drag: LineDrag | null = null
@@ -56,6 +70,7 @@ export function createConnectorLineActions(ctx: EditorContext, beginNodePreview:
     const route = connector ? connectorRoute(ctx.graph, connector) : null
     if (!connector || !route) return
     const curve = route.pieces.at(0)
+    const plate = connectorSublayers(ctx.graph, connector)?.labelBackground
     drag = {
       connectorId,
       part,
@@ -63,7 +78,15 @@ export function createConnectorLineActions(ctx: EditorContext, beginNodePreview:
       pieces: route.pieces,
       joints: elbowJoints(route.start, route.end, route.sides),
       handles: route.controls.curve ?? (curve ? curveControlPoints(curve) : null),
-      preview: beginNodePreview(part.kind === 'curve' ? 'Bend connector' : 'Move connector segment')
+      plate: plate
+        ? {
+            x: connector.x + plate.x,
+            y: connector.y + plate.y,
+            width: plate.width,
+            height: plate.height
+          }
+        : null,
+      preview: beginNodePreview(PREVIEW_LABELS[part.kind])
     }
   }
 
@@ -75,6 +98,15 @@ export function createConnectorLineActions(ctx: EditorContext, beginNodePreview:
     const delta = { x: point.x - current.press.x, y: point.y - current.press.y }
     // Control points sit in the connector's own axes.
     const local = { x: -connector.x, y: -connector.y }
+    if (current.part.kind === 'label') {
+      if (!current.plate) return
+      const { x: px, y: py, width, height } = current.plate
+      // The label's centre follows the pointer, wherever the plate was grabbed.
+      const centre = { x: px + width / 2 + delta.x, y: py + height / 2 + delta.y }
+      const position = connectorLabelPositionAt(current.pieces, { width, height }, centre)
+      if (position) current.preview.update(connector.id, { connectorLabelPosition: position })
+      return
+    }
     if (current.part.kind === 'curve') {
       if (!current.handles) return
       const [first, second] = dragCurve(current.handles, delta)

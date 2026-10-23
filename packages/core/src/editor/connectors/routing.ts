@@ -30,7 +30,8 @@ const CONNECTOR_FIELDS: ReadonlySet<string> = new Set<keyof SceneNode>([
   'connectorStartCap',
   'connectorEndCap',
   'connectorControlPoints',
-  'connectorCurveHandles'
+  'connectorCurveHandles',
+  'connectorLabelPosition'
 ])
 
 /** What keeping a dragged elbow's new route as its control points changes on the connector. */

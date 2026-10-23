@@ -2,10 +2,11 @@ import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 import {
   connectorLineEnds,
   connectorRoute,
+  connectorSublayers,
   curveMidpoint
 } from '@open-pencil/scene-graph/connectors'
 import Matrix from '@open-pencil/scene-graph/matrix'
-import type { Vector } from '@open-pencil/scene-graph/primitives'
+import type { Rect, Vector } from '@open-pencil/scene-graph/primitives'
 
 import { createSceneGeometry } from './scene'
 import type { RotationPreview, ViewportTransform } from './types'
@@ -76,4 +77,26 @@ export function connectorRouteHandles(
       }
     ]
   })
+}
+
+/** Where a connector's label plate is on screen, while it has a label to drag. */
+export function connectorScreenLabel(
+  graph: SceneGraph,
+  connector: SceneNode,
+  viewport: ViewportTransform,
+  preview?: RotationPreview | null
+): Rect | null {
+  const parts = connectorSublayers(graph, connector)
+  if (!parts || parts.label.text === '' || !parts.labelBackground.visible) return null
+  const plate = parts.labelBackground
+  const [x0, y0, x1, y1] = Matrix.mapPoints(
+    createSceneGeometry(graph, preview).screenMatrix(plate, viewport),
+    [0, 0, plate.width, plate.height]
+  )
+  return {
+    x: Math.min(x0, x1),
+    y: Math.min(y0, y1),
+    width: Math.abs(x1 - x0),
+    height: Math.abs(y1 - y0)
+  }
 }

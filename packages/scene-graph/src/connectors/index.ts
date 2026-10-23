@@ -1,6 +1,11 @@
 export { CONNECTOR_NAME, createConnector, type ConnectorContent } from './create'
 export { hitsConnectorLine } from './hit'
-export { CONNECTOR_LABEL_PADDING, placeConnectorLabel, type ConnectorLabelLayout } from './label'
+export {
+  CONNECTOR_LABEL_PADDING,
+  connectorLabelPositionAt,
+  placeConnectorLabel,
+  type ConnectorLabelLayout
+} from './label'
 export {
   curveControlPoints,
   curveMidpoint,

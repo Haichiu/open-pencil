@@ -1,5 +1,9 @@
 import type { Editor } from '@open-pencil/core'
-import { CONNECTOR_SEGMENT_HANDLE, connectorRouteHandles } from '@open-pencil/core/geometry'
+import {
+  CONNECTOR_SEGMENT_HANDLE,
+  connectorRouteHandles,
+  connectorScreenLabel
+} from '@open-pencil/core/geometry'
 
 import type { DragState } from '#vue/shared/input/types'
 
@@ -15,6 +19,17 @@ function connectorLineAt(editor: Editor, sx: number, sy: number) {
   const [id] = state.selectedIds
   const connector = editor.graph.getNode(id)
   if (connector?.type !== 'CONNECTOR' || connector.locked) return null
+  // The label lies over the middle of its run, so it takes the press before that segment does.
+  const plate = connectorScreenLabel(editor.graph, connector, state, state.rotationPreview)
+  if (
+    plate &&
+    sx >= plate.x &&
+    sx <= plate.x + plate.width &&
+    sy >= plate.y &&
+    sy <= plate.y + plate.height
+  ) {
+    return { connectorId: id, part: { kind: 'label' as const } }
+  }
   const handles = connectorRouteHandles(editor.graph, connector, state, state.rotationPreview)
   const hit = handles.find((handle) => {
     const dx = Math.abs(sx - handle.at.x)
@@ -34,7 +49,7 @@ function connectorLineAt(editor: Editor, sx: number, sy: number) {
   }
 }
 
-/** Drags a selected connector's elbow segment or curve by its handle. */
+/** Drags a selected connector's elbow segment, curve, or label by its handle. */
 export function tryStartConnectorLineDrag(
   editor: Editor,
   cx: number,

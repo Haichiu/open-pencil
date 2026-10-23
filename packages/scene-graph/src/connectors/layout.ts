@@ -206,10 +206,14 @@ export function layoutConnector(
       ? { ...route.controls, points: elbowControlPoints(pieces) }
       : route.controls
   const labelled = label.text !== ''
-  const placed = placeConnectorLabel(pieces, {
-    width: label.width + CONNECTOR_LABEL_PADDING * 2,
-    height: label.height + CONNECTOR_LABEL_PADDING * 2
-  })
+  const placed = placeConnectorLabel(
+    pieces,
+    {
+      width: label.width + CONNECTOR_LABEL_PADDING * 2,
+      height: label.height + CONNECTOR_LABEL_PADDING * 2
+    },
+    connector.connectorLabelPosition
+  )
   const routed = labelled && placed ? placed.pieces : pieces
   const writes = routeWrites(connector, parts, routed, placed, labelled, keepBox, controls)
   let moved = false

@@ -44,6 +44,7 @@ export {
   CONNECTOR_SEGMENT_HANDLE,
   connectorRouteHandles,
   connectorScreenEnds,
+  connectorScreenLabel,
   type ConnectorRouteHandle
 } from './connectors'
 export {

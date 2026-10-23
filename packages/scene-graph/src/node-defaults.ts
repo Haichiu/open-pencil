@@ -168,6 +168,7 @@ export function createDefaultNode(
     connectorEndCap: 'ARROW_LINES',
     connectorControlPoints: [],
     connectorCurveHandles: null,
+    connectorLabelPosition: null,
     isMask: false,
     maskType: 'ALPHA',
     maskIsOutline: false,

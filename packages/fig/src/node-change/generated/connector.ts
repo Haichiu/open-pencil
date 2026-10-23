@@ -6,6 +6,7 @@ import { guidToString, isUnsetGuid, UNSET_GUID } from '@open-pencil/kiwi/fig/gui
 import type {
   ConnectorControlPoint,
   ConnectorEndpoint,
+  ConnectorLabelPosition,
   ConnectorLineType,
   ConnectorMagnet,
   SceneGraph,
@@ -83,6 +84,37 @@ function kiwiControlPoints(points: ConnectorControlPoint[], origin: Vector) {
     position: { x: position.x + origin.x, y: position.y + origin.y },
     axis: direction === 'HORIZONTAL' ? { x: 1, y: 0 } : { x: 0, y: 1 }
   }))
+}
+
+const LABEL_SECTIONS: ReadonlySet<string> = new Set<ConnectorLabelPosition['section']>([
+  'MIDDLE_TO_START',
+  'MIDDLE_TO_END'
+])
+const LABEL_OFF_AXES: ReadonlySet<string> = new Set<ConnectorLabelPosition['offAxis']>([
+  'NONE',
+  'ABOVE',
+  'BELOW'
+])
+
+interface KiwiTextMidpoint {
+  section?: string
+  offset?: number
+  offAxisOffset?: string
+}
+
+/** Where a record's label was dragged to, from Figma's `connectorTextMidpoint`. */
+function labelPositionOf(value: unknown): ConnectorLabelPosition | null {
+  if (!value || typeof value !== 'object') return null
+  const { section, offset, offAxisOffset } = value as KiwiTextMidpoint
+  if (!section || !LABEL_SECTIONS.has(section) || typeof offset !== 'number') return null
+  return {
+    section: section as ConnectorLabelPosition['section'],
+    offset,
+    offAxis:
+      offAxisOffset && LABEL_OFF_AXES.has(offAxisOffset)
+        ? (offAxisOffset as ConnectorLabelPosition['offAxis'])
+        : 'NONE'
+  }
 }
 
 interface KiwiConnectorEndpoint {
@@ -214,7 +246,8 @@ function readConnector(
     connectorStartCap: capOf(record.connectorStartCap, 'ROUND'),
     connectorEndCap: capOf(record.connectorEndCap, 'ARROW_LINES'),
     connectorControlPoints: controlPointsOf(record.connectorControlPoints, connector),
-    connectorCurveHandles: curveHandlesOf(record.connectorBezierControlPoints, connector)
+    connectorCurveHandles: curveHandlesOf(record.connectorBezierControlPoints, connector),
+    connectorLabelPosition: labelPositionOf(record.connectorTextMidpoint)
   })
   const text = overrides.get(label)?.textData?.characters ?? ''
   const plate = sublayerProps(
@@ -290,6 +323,10 @@ function writeConnector(
       node.connectorCurveHandles.map((position) => ({ position, direction: 'HORIZONTAL' })),
       node
     )
+  }
+  if (node.connectorLabelPosition) {
+    const { section, offset, offAxis } = node.connectorLabelPosition
+    record.connectorTextMidpoint = { section, offset, offAxisOffset: offAxis }
   }
   record.connectorType = 'MANUAL'
   record.connectorVersion = 1
