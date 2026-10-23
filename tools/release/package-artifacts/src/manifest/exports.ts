@@ -112,6 +112,12 @@ export function validateManifest(manifest: PackageManifest): PackageDiagnostic[]
     if (entry.condition === 'types') validateTypes(entry.field, entry.target)
     else validateRuntime(entry.field, entry.target, entry.condition)
   }
+  // A wildcard target is used as written: Bun 1.3 adds no extension, so `./src/*` names no file.
+  for (const entry of collectExportTargets(manifest.imports, ['imports'])) {
+    if (entry.target.includes('*') && !/\*\.[a-z.]+$/.test(entry.target)) {
+      report(entry.field, `wildcard target names no extension (${entry.target})`)
+    }
+  }
   if (
     manifest.publishConfig &&
     ('exports' in manifest.publishConfig ||
