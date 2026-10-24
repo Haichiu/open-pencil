@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
 
+import type { CanvasKit, TypefaceFontProvider } from 'canvaskit-wasm'
+
 import { FontManager } from '@open-pencil/core/text'
 
 /** A font manager that asks no web provider, so a family's faces come from its catalog. */
@@ -7,6 +9,17 @@ function offlineManager() {
   const manager = new FontManager()
   manager.setOnlineFontProviders({})
   return manager
+}
+
+/** Records what it registers, so a second registration of a face's bytes shows up. */
+function countingProvider() {
+  const registrations = new Map<string, number>()
+  const provider = {
+    registerFont(_data: ArrayBuffer, family: string) {
+      registrations.set(family, (registrations.get(family) ?? 0) + 1)
+    }
+  } as TypefaceFontProvider
+  return { provider, registrations }
 }
 
 test('a face lookup that outlives a new catalog does not overwrite what the catalog says', async () => {
@@ -76,4 +89,42 @@ test('cancelled fallback preparation does not register a late host font', async 
   data.resolve(new ArrayBuffer(16))
   await expect(pending).rejects.toHaveProperty('name', 'AbortError')
   expect(manager.loadedData('Microsoft YaHei', 'Regular')).toBeNull()
+})
+
+test('macOS fallback preparation after a document edit reads and registers each face once', async () => {
+  const manager = offlineManager()
+  manager.setFallbackUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)')
+  const { provider, registrations } = countingProvider()
+  manager.attachProvider({} as CanvasKit, provider)
+  const reads = new Map<string, number>()
+  manager.setHostFontLoader(async (family, style) => {
+    const key = `${family}|${style}`
+    reads.set(key, (reads.get(key) ?? 0) + 1)
+    return new ArrayBuffer(16)
+  })
+
+  // What the editor runs after every AI or MCP edit, with the characters its text needs.
+  for (let i = 0; i < 5; i++) await manager.ensureFallbackPack(['cjk-tc'], '設計規範')
+
+  expect(reads.size).toBeGreaterThan(0)
+  expect([...reads.values()].every((count) => count === 1)).toBe(true)
+  expect(registrations.size).toBe(reads.size)
+  expect([...registrations.values()].every((count) => count === 1)).toBe(true)
+})
+
+test('a host read that outlives its loader never registers the replaced loader data', async () => {
+  const manager = offlineManager()
+  manager.setFallbackUserAgent('Windows')
+  const previous = Promise.withResolvers<ArrayBuffer | null>()
+  manager.setHostFontLoader(() => previous.promise)
+  const preparing = manager.ensureFallbackPack(['cjk-sc'], '', new AbortController().signal)
+  const replacement = new ArrayBuffer(16)
+  manager.setHostFontLoader(async () => replacement)
+  previous.resolve(new ArrayBuffer(16))
+  await preparing
+
+  expect(manager.loadedData('Microsoft YaHei', 'Regular')).toBeNull()
+
+  await manager.ensureFallbackPack(['cjk-sc'], '', new AbortController().signal)
+  expect(manager.loadedData('Microsoft YaHei', 'Regular')).toBe(replacement)
 })
